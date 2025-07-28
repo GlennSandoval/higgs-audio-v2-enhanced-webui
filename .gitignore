@@ -17,6 +17,20 @@ audioverse/cache
 # vim ipython plugin generated files
 .jukit
 
+# Virtual environment
+higgs_audio_env/
+env/
+venv/
+.env
+
+# Cache directories
+cache/
+output/
+voice_test_output.wav
+
+# User-specific files
+TODO_LIST.md
+
 # node
 node_modules
 package.json

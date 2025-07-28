@@ -1,140 +1,246 @@
-<div align="center">
-  
-## 🎵 Higgs Audio v2 WebUI
-[![Higgs Audio v2 Model](https://img.shields.io/badge/HuggingFace-Model-blue?logo=huggingface)](https://huggingface.co/bosonai/higgs-audio-v2-generation-3B-base)
-[![Tokenizer](https://img.shields.io/badge/HuggingFace-Tokenizer-orange?logo=huggingface)](https://huggingface.co/bosonai/higgs-audio-v2-tokenizer)
-[![Original Repo](https://img.shields.io/badge/GitHub-boson--ai%2Fhiggs--audio-black?logo=github)](https://github.com/boson-ai/higgs-audio)
-[![Live Demo](https://img.shields.io/badge/HuggingFace-Live%20Demo-green?logo=huggingface)](https://huggingface.co/spaces/smola/higgs_audio_v2)
+# 🎵 Higgs Audio v2 Enhanced WebUI
 
-Generate high-quality speech from text with voice cloning, longform generation, multi-speaker generation, voice library, and smart batching—all in a user-friendly web interface.
+An advanced, feature-rich web interface for the Higgs Audio v2 model with professional audio generation capabilities, multi-speaker support, volume normalization, and extensive customization options.
 
-<img width="2296" height="1260" alt="image" src="https://github.com/user-attachments/assets/5d12b595-c090-4943-bf33-89577e967e73" />
-</div>
+![Higgs Audio WebUI](figures/higgs_audio_v2_architecture_combined.png)
 
-Multi-Speaker Example
+## ✨ Key Features
 
+### 🎭 **Multi-Speaker Generation**
+- **Dynamic Speaker Detection** - Use any character names in brackets `[Alice]`, `[Bob]`, `[Character Name]`
+- **Unlimited Speakers** - No more 3-speaker limit, support for 10+ characters
+- **Smart Voice Assignment** - Assign different voices to each character
+- **Voice Library Integration** - Use saved voices for consistent character voices
+- **Upload Voice Samples** - Upload custom voice samples for each speaker
+- **Configurable Pauses** - Control timing between speaker changes (0.0-2.0 seconds)
 
+### 🔊 **Volume Normalization**
+- **Multi-Speaker Balance** - Automatic volume normalization for consistent speaker levels
+- **Adaptive Normalization** - Sliding window approach for dynamic content
+- **Simple Normalization** - Basic RMS-based volume leveling
+- **Segment-Based** - Detect and normalize individual speaker segments
+- **Configurable Target Levels** - Set desired volume levels (RMS 0.05-0.3)
 
+### 🎛️ **Advanced Generation Parameters**
+- **Exposed Hidden Parameters** - Access to `top_k`, `top_p`, `min_p`, `repetition_penalty`
+- **Repetition Aware Sampling (RAS)** - `ras_win_len`, `ras_win_max_num_repeat`
+- **Per-Voice Settings** - Save custom parameters for each voice in your library
+- **Smart Defaults** - Optimized settings for different use cases
 
-https://github.com/user-attachments/assets/2eef22c0-f905-4099-b60a-70e2d0c6510b
+### 📚 **Enhanced Voice Library**
+- **Per-Voice Configuration** - Each voice saves its own generation parameters
+- **Auto-Populate Names** - Extract voice names from uploaded filenames
+- **Voice Testing** - Test voices with custom parameters before saving
+- **Organized Management** - Easy voice selection and editing
+- **JSON Configuration** - Robust parameter storage and retrieval
 
+### 🌐 **Public Sharing & Deployment**
+- **Hugging Face Share** - Create public links for remote access
+- **Local Network Sharing** - Share on your local network
+- **Multiple Launch Options** - Different batch files for different scenarios
+- **Security Controls** - Warnings and confirmations for public access
 
+### 🚀 **Performance & Optimization**
+- **Smart Caching** - Intelligent model and audio caching
+- **Memory Management** - Automatic cleanup and resource optimization
+- **GPU Acceleration** - Full CUDA support for fast generation
+- **Cache Migration** - Tools to migrate existing model caches
 
+## 🛠️ Installation & Setup
 
-Long-Form Example
+### Quick Start
+```bash
+# 1. Clone the repository
+git clone https://github.com/YOUR_USERNAME/higgs-audio-v2-enhanced-webui.git
+cd higgs-audio-v2-enhanced-webui
 
+# 2. Set up virtual environment (Windows)
+.\setup_venv.bat
 
+# 3. Launch the interface
+.\run_gui.bat
+```
 
+### For Public Sharing
+```bash
+# Simple public sharing
+.\run_gui_public.bat
 
-https://github.com/user-attachments/assets/efb710f8-52a9-41e6-918a-68dc01d4248f
+# Advanced public sharing with security prompts
+.\run_gui_public_advanced.bat
 
+# Local network only
+.\run_gui_network.bat
+```
 
+### Cache Migration (Prevents Redownloading)
+```bash
+# Migrate existing cached models
+.\migrate_cache.bat
+```
 
+## 📖 Detailed Documentation
 
+### Multi-Speaker Generation
 
----
+Create natural conversations with multiple characters:
 
-## 🚀 Features
+```
+[Alice] Hello there, how are you doing today?
+[Bob] I'm doing great, thank you for asking! How about yourself?
+[Charlie] Mind if I join this conversation?
+[Alice] Of course! The more the merrier.
+```
 
-- **One-click installer for Windows 10/11 (x64)**
-  - Supports NVIDIA 30xx / 40xx / 50xx GPUs and CPU (slow)
-  - **Recommended: 24GB VRAM** for best performance
-- **Voice Cloning**: Upload your own voice or use predefined/library voices
-- **Longform Generation**: Smart chunking for seamless long text synthesis
-- **Multi-Speaker Generation**: Assign different voices to speakers, upload or select from library
-- **Voice Library**: Save, manage, and reuse custom voices
-- **Whisper Speech-to-Text**: Automatic captioning and voice sample transcription
-- **Smart Voice Consistency**:
-  - In longform generation, if Smart Voice is used, the first generated audio sample is used as a reference for all subsequent chunks to maintain speaker consistency.
-  - In multi-speaker generation, the first generated audio for each speaker is used as a reference for that speaker's subsequent lines, ensuring consistent speaker identity.
-- **Scene Description**: Optionally describe the environment for more expressive results
-- **Comprehensive Debugging**: Installer and app provide clear, color-coded status and error messages
+**Features:**
+- **Any character names** - Use meaningful names instead of SPEAKER0/1/2
+- **Voice assignment** - Choose voices from library or upload samples
+- **Natural timing** - Configurable pauses between speakers
+- **Volume balance** - Automatic normalization for consistent levels
 
----
+### Voice Library Management
 
-## 🖥️ Installation (Recommended: One-Click)
+**Adding New Voices:**
+1. Upload audio sample (any format)
+2. Voice name auto-populates from filename
+3. Set custom generation parameters
+4. Test with different settings
+5. Save to library
 
-1. **[Download](https://github.com/Saganaki22/higgs-audio-WebUI/releases/tag/One-click-installer) and extract files in a folder then run** `run_installer.bat`
-    - Walks you through all options: GPU/CPU selection, environment setup, dependencies
-    - Handles everything: Conda, Python, PyTorch, requirements, Gradio, Whisper, etc.
-    - If interrupted, just re-run—it will continue where it left off
-2. **After installation, run** `run_gui.bat` to launch the web interface
+**Using Saved Voices:**
+- Select voices for basic generation
+- Assign to specific characters in multi-speaker
+- Edit parameters anytime
+- Consistent voice characteristics
 
-> **Note:** The installer is for Windows 10/11 x64. For best results, use an NVIDIA 30xx/40xx/50xx GPU with at least 24GB VRAM. CPU mode is supported but much slower.
+### Volume Normalization
 
----
+**Methods:**
+- **Adaptive** ⭐ - Best for multi-speaker, uses sliding windows
+- **Simple** - Basic RMS normalization for single speaker
+- **Segment-Based** - Detects and normalizes speaker segments individually
 
-## ⚙️ Manual/Advanced Installation
+**Benefits:**
+- No more volume imbalances
+- Professional audio quality
+- Podcast-ready output
+- Consistent listening experience
 
-1. **Clone the repo:**
-   ```bash
-   git clone https://github.com/Saganaki22/higgs-audio-WebUI.git
-   cd higgs-audio-WebUI
-   ```
-2. **Create and activate Conda environment (Python 3.10):**
-   ```bash
-   conda create -n higgs_audio_env python=3.10
-   conda activate higgs_audio_env
-   ```
-3. **Install requirements:**
-   ```bash
-   pip install --upgrade pip
-   pip install -r requirements.txt
-   pip install gradio
-   pip install faster-whisper
-   ```
-4. **Install PyTorch (choose one):**
-   - **NVIDIA 30xx/40xx (CUDA 12.6):**
-     ```bash
-     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
-     ```
-   - **NVIDIA 50xx (CUDA 12.8):**
-     ```bash
-     pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu128
-     ```
-   - **CPU (slow):**
-     ```bash
-     pip install torch torchvision torchaudio
-     ```
-5. **Install the package in editable mode:**
-   ```bash
-   pip install -e .
-   ```
-6. **Run the app:**
-   ```bash
-   conda activate higgs_audio_env
-   python higgs_audio_gradio.py
-   ```
+## 🎯 Use Cases
 
----
+### 📖 **Audiobooks & Narration**
+- Multiple character voices
+- Consistent volume levels
+- Professional pacing
+- Chapter-by-chapter generation
 
-## 📝 Usage Highlights
+### 🎙️ **Podcasts & Interviews**
+- Natural conversation flow
+- Balanced speaker levels
+- Background ambience support
+- Easy editing workflow
 
-- **Voice Cloning:** Upload a clear 10–30 second sample for best results. The app will auto-transcribe your sample using Whisper.
-- **Longform Generation:** Paste long text; the app will smartly chunk it for natural synthesis. If Smart Voice is selected, the first chunk's audio is used as a reference for all subsequent chunks, ensuring consistent speaker identity.
-- **Multi-Speaker Generation:** Use `[SPEAKER0]`, `[SPEAKER1]`, etc., tags in your transcript. You can upload distinct voices for each speaker or select from the voice library. The first generated audio for each speaker is used as a reference for their subsequent lines.
-- **Voice Library:** Save and manage your favorite voices for quick reuse in any mode.
-- **Scene Description:** Add context to your audio (e.g., "in a quiet room") for more expressive results.
+### 🎭 **Drama & Entertainment**
+- Character-specific voices
+- Dramatic pauses
+- Emotional range
+- Scene descriptions
 
----
+### 📚 **Educational Content**
+- Clear narration
+- Multiple presenter voices
+- Consistent quality
+- Accessible audio
 
-## 📦 Model & Tokenizer
+## 🔧 Advanced Configuration
 
-- **Model:** [Higgs Audio v2 Generation 3B Base](https://huggingface.co/bosonai/higgs-audio-v2-generation-3B-base)
-- **Tokenizer:** [Higgs Audio v2 Tokenizer](https://huggingface.co/bosonai/higgs-audio-v2-tokenizer)
-- **Original Model Repo:** [boson-ai/higgs-audio](https://github.com/boson-ai/higgs-audio)
-- **Live Demo:** [HuggingFace Spaces](https://huggingface.co/spaces/smola/higgs_audio_v2)
+### Command Line Options
+```bash
+python higgs_audio_gradio.py --help
 
----
+Options:
+  --share              Create public shareable link
+  --server-name HOST   Server host address (default: 127.0.0.1)
+  --server-port PORT   Server port (default: 7860)
+```
+
+### Environment Variables
+```bash
+# Cache configuration
+set HF_HOME=./cache/huggingface
+set HF_HUB_CACHE=%HF_HOME%/hub
+set TRANSFORMERS_CACHE=%HF_HUB_CACHE%
+```
+
+### Generation Parameters
+
+| Parameter | Description | Range | Default |
+|-----------|-------------|-------|---------|
+| Temperature | Creativity vs consistency | 0.1-2.0 | 1.0 |
+| Top-K | Token selection limit | 1-100 | 50 |
+| Top-P | Nucleus sampling threshold | 0.1-1.0 | 0.95 |
+| Min-P | Minimum probability threshold | 0.0-0.5 | 0.0 |
+| Repetition Penalty | Reduce repetitions | 0.5-2.0 | 1.0 |
+| RAS Window Length | Repetition detection window | 0-20 | 7 |
+| RAS Max Repeats | Maximum allowed repetitions | 1-5 | 2 |
+
+## 📁 Project Structure
+
+```
+higgs-audio-v2-enhanced-webui/
+├── higgs_audio_gradio.py          # Main application
+├── audio_processing_utils.py      # Volume normalization module
+├── run_gui.bat                    # Local launcher
+├── run_gui_public.bat            # Public sharing launcher
+├── run_gui_network.bat           # Network sharing launcher
+├── setup_venv.bat                # Environment setup
+├── migrate_cache.bat             # Cache migration tool
+├── voice_library/                # Saved voices directory
+├── output/                       # Generated audio output
+├── cache/                        # Model cache directory
+└── README.md                     # This file
+```
+
+## 🚀 Performance Tips
+
+### For Better Generation:
+- Use **GPU** if available (CUDA support)
+- Enable **caching** for faster repeated generations
+- Use **appropriate parameters** for your content type
+- **Migrate cache** to avoid redownloading models
+
+### For Public Sharing:
+- Use **run_gui_public_advanced.bat** for security prompts
+- Monitor **resource usage** when sharing publicly
+- Set **reasonable limits** on generation length
+- Consider **authentication** for production use
+
+## 🤝 Contributing
+
+We welcome contributions! Areas for improvement:
+- Additional normalization algorithms
+- More voice management features
+- UI/UX enhancements
+- Performance optimizations
+- Documentation improvements
 
 ## 📄 License
 
-See [LICENSE](LICENSE) for details. Model and tokenizer are provided under their respective licenses by Boson AI.
+This project is based on the original Higgs Audio v2 model. Please see the original license terms.
+
+## 🙏 Acknowledgments
+
+- **Boson AI** - Original Higgs Audio v2 model
+- **Hugging Face** - Model hosting and sharing infrastructure
+- **Gradio** - Web interface framework
+- **Community Contributors** - Testing and feedback
+
+## 🔗 Links
+
+- [Original Higgs Audio v2](https://huggingface.co/bosonai/higgs-audio-v2-generation-3B-base)
+- [Gradio Documentation](https://gradio.app/docs/)
+- [Issues & Bug Reports](https://github.com/YOUR_USERNAME/higgs-audio-v2-enhanced-webui/issues)
 
 ---
 
-## 🙏 Acknowledgements
-
-- [Boson AI](https://github.com/boson-ai/higgs-audio) for the original model and tokenizer
-- [HuggingFace](https://huggingface.co/bosonai/higgs-audio-v2-generation-3B-base) for model hosting
-- [smola/higgs_audio_v2](https://huggingface.co/spaces/smola/higgs_audio_v2) for the live demo
+*Made with ❤️ for the AI audio generation community*
