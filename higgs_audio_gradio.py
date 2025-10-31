@@ -15,6 +15,8 @@ from datetime import datetime
 from pydub import AudioSegment
 from pydub.utils import which
 
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+
 # Import our custom audio processing utilities
 from audio_processing_utils import enhance_multi_speaker_audio, normalize_audio_volume
 
@@ -35,7 +37,18 @@ except ImportError:
 # Initialize model
 MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
 AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
-device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# Determine device
+if torch.cuda.is_available():
+    device = torch.device("cuda")
+# Simplified MPS check for broader compatibility
+elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    # Basic check is usually sufficient, detailed check can be problematic
+    device = torch.device("mps")
+else:
+    device = torch.device("cpu")
+
+print(f"Using device: {device}")
 
 # Global instances
 serve_engine = None
@@ -647,14 +660,15 @@ def initialize_whisper():
     global WHISPER_AVAILABLE
     if whisper_model is None and WHISPER_AVAILABLE:
         try:
-            # Try faster-whisper first
-            whisper_model = WhisperModel("large-v3", device="cuda" if torch.cuda.is_available() else "cpu")
-            print("✅ Loaded faster-whisper model")
-        except ImportError:
-            # Fallback to openai-whisper
-            import whisper
-            whisper_model = whisper.load_model("large")
-            print("✅ Loaded openai-whisper model")
+            # Try faster-whisper first if it was imported
+            if 'WhisperModel' in globals():
+                whisper_model = WhisperModel("large-v3", device="cuda" if torch.cuda.is_available() else "cpu")
+                print("✅ Loaded faster-whisper model")
+            else:
+                # Use openai-whisper
+                import whisper
+                whisper_model = whisper.load_model("large")
+                print("✅ Loaded openai-whisper model")
         except Exception as e:
             print(f"⚠️ Failed to load whisper model: {e}")
             # Try base model as fallback
