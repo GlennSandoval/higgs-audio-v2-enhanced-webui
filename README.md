@@ -37,7 +37,7 @@ An advanced, feature-rich web interface for the Higgs Audio v2 model with profes
 ### 🌐 **Public Sharing & Deployment**
 - **Hugging Face Share** - Create public links for remote access
 - **Local Network Sharing** - Share on your local network
-- **Multiple Launch Options** - Different batch files for different scenarios
+- **Multiple Launch Options** - Cross-platform CLI flags and helper scripts for common scenarios
 - **Security Controls** - Warnings and confirmations for public access
 
 ### 🚀 **Performance & Optimization**
@@ -48,36 +48,39 @@ An advanced, feature-rich web interface for the Higgs Audio v2 model with profes
 
 ## 🛠️ Installation & Setup
 
+git clone https://github.com/psdwizzard/higgs-audio-v2-enhanced-webui.git
 ### Quick Start
 ```bash
 # 1. Clone the repository
 git clone https://github.com/psdwizzard/higgs-audio-v2-enhanced-webui.git
 cd higgs-audio-v2-enhanced-webui
 
-# 2. Set up virtual environment (Windows)
-.\setup_venv.bat
+# 2. Install dependencies (creates .venv via uv)
+uv sync
 
-# 3. Launch the interface
-.\run_gui.bat
+# 3. Sanity-check the installation
+uv run python verify_setup.py
+
+# 4. Launch the interface
+uv run python higgs_audio_gradio.py
 ```
+
+**macOS tip:** If you installed FFmpeg through MacPorts, run `./run.sh` instead of the last command so the script can expose the MacPorts library path before launching Gradio.
+
+**Windows note:** `uv` works on Windows too. Run the same commands from PowerShell. If you prefer the built-in `venv`, create and activate it (`python -m venv .venv`, `.\.venv\Scripts\Activate`), install dependencies with `pip install -e .`, then run `python verify_setup.py` and `python higgs_audio_gradio.py`.
 
 ### For Public Sharing
 ```bash
 # Simple public sharing
-.\run_gui_public.bat
+uv run python higgs_audio_gradio.py --share
 
-# Advanced public sharing with security prompts
-.\run_gui_public_advanced.bat
-
-# Local network only
-.\run_gui_network.bat
+# Bind to a specific host/port (e.g., LAN sharing)
+uv run python higgs_audio_gradio.py --server-name 0.0.0.0 --server-port 7860
 ```
 
-### Cache Migration (Prevents Redownloading)
-```bash
-# Migrate existing cached models
-.\migrate_cache.bat
-```
+### Reuse Existing Huggingface Cache
+- Point `HF_HOME`, `HF_HUB_CACHE`, or `TRANSFORMERS_CACHE` to a directory that already contains the model weights.
+- For example, set `export HF_HOME=/path/to/cache` (macOS/Linux) or `set HF_HOME=C:\path\to\cache` (Windows) before running the app.
 
 ## 📖 Detailed Documentation
 
@@ -166,10 +169,15 @@ Options:
 
 ### Environment Variables
 ```bash
-# Cache configuration
-set HF_HOME=./cache/huggingface
-set HF_HUB_CACHE=%HF_HOME%/hub
-set TRANSFORMERS_CACHE=%HF_HUB_CACHE%
+# Cache configuration (macOS/Linux)
+export HF_HOME=./cache/huggingface
+export HF_HUB_CACHE="$HF_HOME/hub"
+export TRANSFORMERS_CACHE="$HF_HUB_CACHE"
+
+# Cache configuration (Windows PowerShell)
+$env:HF_HOME="./cache/huggingface"
+$env:HF_HUB_CACHE="$env:HF_HOME/hub"
+$env:TRANSFORMERS_CACHE=$env:HF_HUB_CACHE
 ```
 
 ### Generation Parameters
@@ -190,11 +198,7 @@ set TRANSFORMERS_CACHE=%HF_HUB_CACHE%
 higgs-audio-v2-enhanced-webui/
 ├── higgs_audio_gradio.py          # Main application
 ├── audio_processing_utils.py      # Volume normalization module
-├── run_gui.bat                    # Local launcher
-├── run_gui_public.bat            # Public sharing launcher
-├── run_gui_network.bat           # Network sharing launcher
-├── setup_venv.bat                # Environment setup
-├── migrate_cache.bat             # Cache migration tool
+├── run.sh                        # Mac launch helper (sets FFmpeg paths, runs uv)
 ├── voice_library/                # Saved voices directory
 ├── output/                       # Generated audio output
 ├── cache/                        # Model cache directory
@@ -207,10 +211,11 @@ higgs-audio-v2-enhanced-webui/
 - Use **GPU** if available (CUDA support)
 - Enable **caching** for faster repeated generations
 - Use **appropriate parameters** for your content type
-- **Migrate cache** to avoid redownloading models
+- **Reuse existing caches** by pointing `HF_HOME` to shared storage
 
 ### For Public Sharing:
-- Use **run_gui_public_advanced.bat** for security prompts
+- Prefer `--share` only when you trust the network you are exposing
+- Use `--server-name 0.0.0.0` to make the UI visible on your LAN
 - Monitor **resource usage** when sharing publicly
 - Set **reasonable limits** on generation length
 - Consider **authentication** for production use

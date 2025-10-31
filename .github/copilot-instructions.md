@@ -36,3 +36,12 @@
 - Never persist raw user prompts or generated transcripts—`save_transcript_if_enabled` and related functions are intentionally disabled.
 - `optimized_generate_audio` cache keys include temperature/top_* params; bypass caching (`use_cache=False`) when experimenting with new generation flags.
 - Avoid mixing direct numpy/tensor writes with `torchaudio.save`; stick to helpers so stereo/mono reshaping and normalization stays consistent.
+
+## Feature Parity Guardrails
+- Review the top-level `README.md` before significant code edits; treat every feature called out there (multi-speaker flow, volume normalization modes, voice library management, public sharing flags, cache reuse, etc.) as user-facing commitments.
+- When modifying related code paths, double-check that the described UI controls and CLI flags remain available and behave as documented.
+- If a change risks altering or removing a documented feature, either preserve the behavior, update the README in the same pull request, or surface the gap to the maintainer before merging.
+
+## Audience Awareness
+- Tailor documentation to developers: explain how the code delivers functionality, architecture touchpoints, and integration steps without over-indexing on UI specifics.
+- Keep UI copy focused on user functionality; avoid leaking implementation details or internal architecture in user-facing text.
