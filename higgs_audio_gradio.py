@@ -12,9 +12,8 @@ import gradio as gr
 import numpy as np
 import torch
 import torchaudio
-from pydub import AudioSegment
 
-from app import config, startup
+from app import audio_io, config, startup
 from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
 from boson_multimodal.serve.serve_engine import (HiggsAudioResponse,
                                                  HiggsAudioServeEngine)
@@ -52,317 +51,6 @@ _audio_cache, _token_cache = startup.initialize_caches()
 
 startup.ensure_output_directories()
 
-def convert_audio_to_standard_format(
-    audio_path,
-    target_sample_rate=config.DEFAULT_SAMPLE_RATE,
-    force_mono=False,
-):
-    """
-    Convert any audio file to standard format using multiple fallback methods
-    Returns: (audio_data_numpy, sample_rate) or raises exception
-    Preserves stereo unless force_mono=True
-    """
-    print(f"🔄 Converting audio file: {audio_path}")
-    
-    # Method 1: Try torchaudio first (fastest)
-    try:
-        waveform, sample_rate = torchaudio.load(audio_path)
-        
-        # Convert to mono only if explicitly requested
-        if force_mono and waveform.shape[0] > 1:
-            waveform = torch.mean(waveform, dim=0, keepdim=True)
-            print("🔄 Converted stereo to mono")
-        
-        # Resample if needed
-        if sample_rate != target_sample_rate:
-            resampler = torchaudio.transforms.Resample(sample_rate, target_sample_rate)
-            waveform = resampler(waveform)
-            sample_rate = target_sample_rate
-        
-        # Convert to numpy (preserve channel structure)
-        if waveform.shape[0] == 1:
-            # Mono - squeeze to 1D
-            audio_data = waveform.squeeze().numpy()
-        else:
-            # Stereo - keep as 2D array (channels, samples)
-            audio_data = waveform.numpy()
-        
-        channels = waveform.shape[0]
-        samples = waveform.shape[1]
-        print(f"✅ Loaded with torchaudio: {'stereo' if channels == 2 else 'mono'} - {samples} samples at {sample_rate}Hz")
-        return audio_data, sample_rate
-        
-    except Exception as e:
-        print(f"⚠️ Torchaudio failed: {e}")
-    
-    # Method 2: Try pydub (handles more formats, especially MP3)
-    try:
-        # Load with pydub
-        if audio_path.lower().endswith('.mp3'):
-            audio = AudioSegment.from_mp3(audio_path)
-        elif audio_path.lower().endswith('.wav'):
-            audio = AudioSegment.from_wav(audio_path)
-        else:
-            # Try to auto-detect format
-            audio = AudioSegment.from_file(audio_path)
-        
-        # Convert to mono only if explicitly requested
-        original_channels = audio.channels
-        if force_mono and audio.channels > 1:
-            audio = audio.set_channels(1)
-            print("🔄 Converted stereo to mono")
-        
-        # Set sample rate
-        audio = audio.set_frame_rate(target_sample_rate)
-        
-        # Convert to numpy array
-        audio_data = np.array(audio.get_array_of_samples(), dtype=np.float32)
-        
-        # Normalize to [-1, 1] range
-        if audio.sample_width == 1:  # 8-bit
-            audio_data = audio_data / 128.0
-        elif audio.sample_width == 2:  # 16-bit
-            audio_data = audio_data / 32768.0
-        elif audio.sample_width == 4:  # 32-bit
-            audio_data = audio_data / 2147483648.0
-        else:
-            # Assume already normalized or unknown format
-            audio_data = audio_data / np.max(np.abs(audio_data)) if np.max(np.abs(audio_data)) > 1 else audio_data
-        
-        # Handle stereo data (pydub gives interleaved samples)
-        if audio.channels == 2 and not force_mono:
-            # Reshape interleaved stereo data to (2, samples)
-            audio_data = audio_data.reshape(-1, 2).T
-        
-        channel_info = f"{'stereo' if audio.channels == 2 and not force_mono else 'mono'}"
-        print(f"✅ Loaded with pydub: {channel_info} - {len(audio_data)} samples at {target_sample_rate}Hz")
-        return audio_data, target_sample_rate
-        
-    except Exception as e:
-        print(f"⚠️ Pydub failed: {e}")
-    
-    # Method 3: Try scipy as final fallback
-    try:
-        from scipy.io import wavfile
-        sample_rate, audio_data = wavfile.read(audio_path)
-        
-        # Convert to float32 and normalize
-        if audio_data.dtype == np.int16:
-            audio_data = audio_data.astype(np.float32) / 32768.0
-        elif audio_data.dtype == np.int32:
-            audio_data = audio_data.astype(np.float32) / 2147483648.0
-        elif audio_data.dtype == np.uint8:
-            audio_data = (audio_data.astype(np.float32) - 128.0) / 128.0
-        else:
-            audio_data = audio_data.astype(np.float32)
-        
-        # Handle stereo/mono
-        if len(audio_data.shape) > 1:
-            if force_mono:
-                # Convert stereo to mono
-                audio_data = np.mean(audio_data, axis=1)
-                print("🔄 Converted stereo to mono")
-            else:
-                # Keep stereo, transpose to (channels, samples)
-                audio_data = audio_data.T
-        
-        # Resample if needed (basic resampling)
-        if sample_rate != target_sample_rate:
-            # Simple resampling - for better quality, use librosa
-            ratio = target_sample_rate / sample_rate
-            if len(audio_data.shape) == 1:
-                # Mono
-                new_length = int(len(audio_data) * ratio)
-                audio_data = np.interp(
-                    np.linspace(0, len(audio_data), new_length),
-                    np.arange(len(audio_data)),
-                    audio_data
-                )
-            else:
-                # Stereo
-                new_length = int(audio_data.shape[1] * ratio)
-                resampled = np.zeros((audio_data.shape[0], new_length))
-                for channel in range(audio_data.shape[0]):
-                    resampled[channel] = np.interp(
-                        np.linspace(0, audio_data.shape[1], new_length),
-                        np.arange(audio_data.shape[1]),
-                        audio_data[channel]
-                    )
-                audio_data = resampled
-            sample_rate = target_sample_rate
-        
-        channel_info = f"{'stereo' if len(audio_data.shape) > 1 else 'mono'}"
-        samples = audio_data.shape[1] if len(audio_data.shape) > 1 else len(audio_data)
-        print(f"✅ Loaded with scipy: {channel_info} - {samples} samples at {sample_rate}Hz")
-        return audio_data, sample_rate
-        
-    except Exception as e:
-        print(f"⚠️ Scipy failed: {e}")
-    
-    raise ValueError(f"❌ Could not load audio file: {audio_path}. Tried torchaudio, pydub, and scipy.")
-
-def save_temp_audio_robust(audio_data, sample_rate, force_mono=False):
-    """
-    Robust version of save_temp_audio_fixed that handles various input formats
-    and ensures compatibility with soundfile. Preserves stereo unless force_mono=True
-    """
-    # Create temporary file
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    temp_path = temp_file.name
-    temp_file.close()
-    
-    try:
-        # Ensure audio_data is numpy array
-        if isinstance(audio_data, torch.Tensor):
-            audio_data = audio_data.numpy()
-        elif not isinstance(audio_data, np.ndarray):
-            audio_data = np.array(audio_data)
-        
-        # Ensure float32 dtype
-        if audio_data.dtype != np.float32:
-            audio_data = audio_data.astype(np.float32)
-        
-        # Handle stereo/mono conversion
-        if len(audio_data.shape) == 1:
-            # Mono, shape (N,)
-            if force_mono:
-                audio_data = audio_data
-            else:
-                audio_data = np.expand_dims(audio_data, axis=0)  # (1, N)
-        elif len(audio_data.shape) == 2:
-            # Could be (channels, samples) or (samples, channels)
-            if audio_data.shape[0] > audio_data.shape[1]:
-                # (samples, channels) -> (channels, samples)
-                audio_data = audio_data.T
-            # If force_mono, average channels
-            if force_mono and audio_data.shape[0] > 1:
-                audio_data = np.mean(audio_data, axis=0, keepdims=True)
-        
-        # Normalize to prevent clipping
-        max_val = np.max(np.abs(audio_data))
-        if max_val > 1.0:
-            audio_data = audio_data / max_val
-        
-        # Convert to tensor for torchaudio
-        waveform = torch.from_numpy(audio_data).float()
-        
-        # Ensure 2D (channels, samples)
-        if waveform.dim() == 1:
-            waveform = waveform.unsqueeze(0)
-        
-        print(f"Saving audio: shape={waveform.shape}, dtype={waveform.dtype}, max={waveform.max()}, min={waveform.min()}")
-        
-        torchaudio.save(temp_path, waveform, sample_rate)
-        
-        print(f"✅ Saved audio to: {temp_path}")
-        return temp_path
-        
-    except Exception as e:
-        print(f"❌ Error saving audio: {e}")
-        # Cleanup temp file on error
-        if os.path.exists(temp_path):
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
-        raise
-
-def process_uploaded_audio(uploaded_audio, force_mono=False):
-    """
-    Process uploaded audio from Gradio, handling various formats
-    Returns: (audio_data_numpy, sample_rate) ready for use
-    Preserves stereo unless force_mono=True
-    """
-    if uploaded_audio is None:
-        raise ValueError("No audio uploaded")
-    
-    # Handle both tuple and individual components
-    if isinstance(uploaded_audio, tuple) and len(uploaded_audio) == 2:
-        sample_rate, audio_data = uploaded_audio
-    else:
-        raise ValueError("Invalid uploaded audio format - expected (sample_rate, audio_data) tuple")
-    
-    # If audio_data is already numpy array from Gradio
-    if isinstance(audio_data, np.ndarray):
-        # Ensure float32
-        if audio_data.dtype != np.float32:
-            if audio_data.dtype == np.int16:
-                audio_data = audio_data.astype(np.float32) / 32768.0
-            elif audio_data.dtype == np.int32:
-                audio_data = audio_data.astype(np.float32) / 2147483648.0
-            else:
-                audio_data = audio_data.astype(np.float32)
-        
-        # Handle stereo/mono
-        if len(audio_data.shape) > 1:
-            if force_mono:
-                # Convert stereo to mono
-                audio_data = np.mean(audio_data, axis=1)
-                print("🔄 Converted stereo to mono")
-            else:
-                # Keep stereo, but ensure proper channel order (channels, samples)
-                if audio_data.shape[1] < audio_data.shape[0]:
-                    # Data is (samples, channels), transpose to (channels, samples)
-                    audio_data = audio_data.T
-        
-        # Normalize
-        max_val = np.max(np.abs(audio_data))
-        if max_val > 1.0:
-            audio_data = audio_data / max_val
-        
-        channel_info = "mono"
-        if len(audio_data.shape) > 1:
-            channel_info = f"stereo ({audio_data.shape[0]} channels)"
-        elif not force_mono and len(audio_data.shape) == 1:
-            channel_info = "mono"
-            
-        samples = audio_data.shape[1] if len(audio_data.shape) > 1 else len(audio_data)
-        print(f"✅ Processed uploaded audio: {channel_info} - {samples} samples at {sample_rate}Hz")
-        return audio_data, sample_rate
-    
-    else:
-        raise ValueError("Unexpected audio data format from Gradio")
-
-def enhanced_save_temp_audio_fixed(uploaded_voice, force_mono=False):
-    """
-    Enhanced version that replaces the original save_temp_audio_fixed function
-    Preserves stereo unless force_mono=True
-    """
-    if uploaded_voice is None:
-        raise ValueError("No uploaded voice provided")
-    
-    # Handle both tuple and individual components properly
-    if isinstance(uploaded_voice, tuple) and len(uploaded_voice) == 2:
-        # Process the uploaded audio
-        processed_audio, processed_rate = process_uploaded_audio(uploaded_voice, force_mono)
-        
-        # Save to temporary file
-        return save_temp_audio_robust(processed_audio, processed_rate, force_mono)
-    else:
-        raise ValueError("Invalid uploaded voice format - expected (sample_rate, audio_data) tuple")
-
-def load_audio_file_robust(file_path, target_sample_rate=config.DEFAULT_SAMPLE_RATE):
-    """
-    Load any audio file and convert to standard format
-    """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Audio file not found: {file_path}")
-    
-    return convert_audio_to_standard_format(file_path, target_sample_rate)
-
-def safe_audio_processing(uploaded_voice, operation_name):
-    """Wrapper for safe audio processing with detailed error messages"""
-    try:
-        return enhanced_save_temp_audio_fixed(uploaded_voice)
-    except Exception as e:
-        error_msg = f"❌ Error processing audio for {operation_name}: {str(e)}\n"
-        error_msg += "💡 Try these solutions:\n"
-        error_msg += "  • Ensure your audio file is a valid WAV or MP3\n"
-        error_msg += "  • Try converting your file using a different audio editor\n"
-        error_msg += "  • Make sure the file isn't corrupted\n"
-        error_msg += "  • Install additional dependencies: pip install pydub scipy"
-        raise ValueError(error_msg)
-
 def clear_caches():
     """Clear audio and token caches to free memory"""
     global _audio_cache, _token_cache
@@ -390,26 +78,6 @@ def get_cache_key(
     key_str = f"{text}_{voice_ref}_{temperature}_{top_k}_{top_p}_{min_p}_{repetition_penalty}_{ras_win_len}_{ras_win_max_num_repeat}_{do_sample}"
     return hashlib.sha256(key_str.encode()).hexdigest()
 
-def get_output_path(category, filename_base, extension=".wav"):
-    """Generate organized output paths with timestamps"""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{timestamp}_{filename_base}{extension}"
-    output_path = os.path.join(config.OUTPUT_BASE_DIR, category, filename)
-    
-    # Ensure the directory exists
-    os.makedirs(os.path.dirname(output_path), exist_ok=True)
-    
-    return output_path
-
-def save_transcript_if_enabled(transcript, category, filename_base):
-    """Save transcript to file if whisper is available - DISABLED"""
-    # Disabled - we don't want to permanently save transcripts
-    return None
-
-def save_audio_reference_if_enabled(audio_path, category, filename_base):
-    """Save audio reference if whisper is available - DISABLED"""
-    # Disabled - we don't want to permanently save audio references
-    return None
 
 # Voice library management
 def get_voice_library_voices():
@@ -477,7 +145,7 @@ def save_voice_to_library(audio_data, sample_rate, voice_name):
     
     try:
         # Save audio using robust method
-        temp_path = save_temp_audio_robust(audio_data, sample_rate)
+        temp_path = audio_io.save_temp_audio_robust(audio_data, sample_rate)
         import shutil
         shutil.move(temp_path, voice_path)
         
@@ -736,36 +404,6 @@ def robust_txt_path_creation(audio_path):
             break
     return base_path + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
 
-def robust_file_cleanup(files):
-    """
-    Safely delete a list of files (or a single file path), ignoring errors if files do not exist.
-    """
-    if not files:
-        return
-    if isinstance(files, str):
-        files = [files]
-    for f in files:
-        if f and isinstance(f, str) and os.path.exists(f):
-            try:
-                os.remove(f)
-            except Exception:
-                pass
-
-def save_temp_audio(audio_data, sample_rate):
-    """Save numpy audio data to temporary file and return path"""
-    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".wav")
-    temp_path = temp_file.name
-    temp_file.close()
-    
-    # Convert numpy array to tensor and save
-    if isinstance(audio_data, np.ndarray):
-        waveform = torch.from_numpy(audio_data).float()
-        # If mono, add channel dimension
-        if waveform.dim() == 1:
-            waveform = waveform.unsqueeze(0)
-        torchaudio.save(temp_path, waveform, sample_rate)
-    
-    return temp_path
 
 def parse_multi_speaker_text(text):
     """Parse multi-speaker text and extract speaker assignments"""
@@ -982,7 +620,7 @@ def test_voice_sample(audio_data, sample_rate, test_text=config.DEFAULT_TEST_VOI
         initialize_model()
         
         # Save temporary audio using robust method
-        temp_audio_path = save_temp_audio_robust(audio_data, sample_rate)
+        temp_audio_path = audio_io.save_temp_audio_robust(audio_data, sample_rate)
         temp_txt_path = create_voice_reference_txt(temp_audio_path)
         
         # Generate test audio using voice cloning
@@ -1102,7 +740,7 @@ def generate_basic(
     )
     
     # Save and return audio with organized output
-    output_path = get_output_path(config.OUTPUT_BASIC_SUBDIR, "basic_audio")
+    output_path = audio_io.get_output_path(config.OUTPUT_BASIC_SUBDIR, "basic_audio")
     torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
     
     # Apply volume normalization if enabled
@@ -1184,7 +822,7 @@ def generate_voice_clone(
     
     try:
         # Save uploaded audio to temporary file using enhanced method
-        temp_audio_path = enhanced_save_temp_audio_fixed(uploaded_voice)
+        temp_audio_path = audio_io.enhanced_save_temp_audio_fixed(uploaded_voice)
         
         # Create corresponding txt file with auto-transcription
         temp_txt_path = create_voice_reference_txt(temp_audio_path)  # Auto-transcribes!
@@ -1210,14 +848,14 @@ def generate_voice_clone(
         )
         
         # Save and return audio with organized output
-        output_path = get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice")
+        output_path = audio_io.get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice")
         torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
         clear_caches()  # Clear cache after generation
         return output_path
     
     finally:
         # Clean up temporary files using robust cleanup
-        robust_file_cleanup([temp_audio_path, temp_txt_path])
+        audio_io.robust_file_cleanup([temp_audio_path, temp_txt_path])
 
 def generate_voice_clone_alternative(
     transcript,
@@ -1254,7 +892,7 @@ def generate_voice_clone_alternative(
     
     try:
         # Save uploaded audio to temporary file using enhanced method
-        temp_audio_path = enhanced_save_temp_audio_fixed(uploaded_voice)
+        temp_audio_path = audio_io.enhanced_save_temp_audio_fixed(uploaded_voice)
         
         # Try the voice_ref format (this might be specific to newer versions)
         system_content = config.DEFAULT_SYSTEM_MESSAGE
@@ -1275,14 +913,14 @@ def generate_voice_clone_alternative(
         )
         
         # Save and return audio with organized output
-        output_path = get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice_alt")
+        output_path = audio_io.get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice_alt")
         torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
         clear_caches()  # Clear cache after generation
         return output_path
     
     finally:
         # Clean up temporary file using robust cleanup
-        robust_file_cleanup(temp_audio_path)
+        audio_io.robust_file_cleanup(temp_audio_path)
 
 def generate_longform(
     transcript,
@@ -1317,7 +955,7 @@ def generate_longform(
     try:
         # Determine initial voice reference
         if voice_choice == "Upload Voice" and uploaded_voice is not None and uploaded_voice[1] is not None:
-            temp_audio_path = enhanced_save_temp_audio_fixed(uploaded_voice)
+            temp_audio_path = audio_io.enhanced_save_temp_audio_fixed(uploaded_voice)
             temp_txt_path = create_voice_reference_txt(temp_audio_path)  # Auto-transcribes!
             voice_ref_path = temp_audio_path
             # Read transcription
@@ -1427,7 +1065,7 @@ def generate_longform(
         if full_audio:
             full_audio = np.concatenate(full_audio, axis=0)
             
-            output_path = get_output_path(config.OUTPUT_LONGFORM_SUBDIR, "longform_audio")
+            output_path = audio_io.get_output_path(config.OUTPUT_LONGFORM_SUBDIR, "longform_audio")
             torchaudio.save(output_path, torch.from_numpy(full_audio)[None, :], sampling_rate)
             clear_caches()  # Clear cache after generation
             return output_path
@@ -1437,7 +1075,7 @@ def generate_longform(
     
     finally:
         # Clean up temporary files using robust cleanup
-        robust_file_cleanup([temp_audio_path, temp_txt_path, first_chunk_audio_path])
+        audio_io.robust_file_cleanup([temp_audio_path, temp_txt_path, first_chunk_audio_path])
 
 # IMPROVED HANDLER FUNCTION FOR MULTI-SPEAKER
 def handle_multi_speaker_generation(
@@ -1522,7 +1160,7 @@ def generate_multi_speaker(
                         print(f"🎤 Processing uploaded voice for {speaker_key}...")
                         print(f"📊 Audio data: {len(audio[1])} samples at {audio[0]}Hz")
                         # Save the uploaded audio properly using enhanced method
-                        temp_path = enhanced_save_temp_audio_fixed(audio)
+                        temp_path = audio_io.enhanced_save_temp_audio_fixed(audio)
                         # CRITICAL: Create transcription for the voice reference
                         temp_txt_path = create_voice_reference_txt(temp_path)
                         # Read the transcription for use as reference text
@@ -1715,7 +1353,7 @@ def generate_multi_speaker(
         if full_audio:
             full_audio = np.concatenate(full_audio, axis=0)
             
-            output_path = get_output_path(config.OUTPUT_MULTI_SPEAKER_SUBDIR, "multi_speaker_audio")
+            output_path = audio_io.get_output_path(config.OUTPUT_MULTI_SPEAKER_SUBDIR, "multi_speaker_audio")
             torchaudio.save(output_path, torch.from_numpy(full_audio)[None, :], sampling_rate)
             
             print(f"🎉 Multi-speaker audio generated successfully: {output_path}")
@@ -1731,7 +1369,7 @@ def generate_multi_speaker(
     
     finally:
         # Clean up temporary files using robust cleanup
-        robust_file_cleanup(temp_files)
+        audio_io.robust_file_cleanup(temp_files)
 
 def refresh_voice_list():
     updated_voices = get_all_available_voices()
@@ -2524,7 +2162,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
             )
             
             # Save test output to a clearly marked test location
-            test_output_path = get_output_path(
+            test_output_path = audio_io.get_output_path(
                 config.OUTPUT_VOICE_CLONING_SUBDIR,
                 f"voice_test_{unique_id}"
             )
