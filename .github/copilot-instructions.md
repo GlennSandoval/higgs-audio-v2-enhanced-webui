@@ -9,6 +9,7 @@
 - Launch the UI with `uv run python higgs_audio_gradio.py`; the script sets `HF_HUB_ENABLE_HF_TRANSFER=1` to speed Hugging Face downloads.
 - Large model weights come from `bosonai/higgs-audio-v2-generation-3B-base`; expect multi-GB pulls and GPU memory >16 GB for smooth runs.
 - Keep `ffmpeg` on PATH (`brew install ffmpeg` on macOS) so `pydub` and `torchaudio` can transcode uploads without crashes.
+- Run the test suite with `uv run pytest -q`; the `uv` shim ensures dependencies resolve inside the project virtualenv.
 
 ## Voice Assets & Library
 - Voices live under `voice_library/` as triplets: `<name>.wav`, auto-generated `<name>.txt` transcript, and `<name>_config.json` with saved sampling params.
