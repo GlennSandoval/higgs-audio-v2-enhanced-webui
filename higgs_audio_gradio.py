@@ -4,6 +4,7 @@ import torchaudio
 import os
 import sys
 import argparse
+from copy import deepcopy
 from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine, HiggsAudioResponse
 from boson_multimodal.data_types import ChatMLSample, Message, AudioContent
 import numpy as np
@@ -15,7 +16,9 @@ from datetime import datetime
 from pydub import AudioSegment
 from pydub.utils import which
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+from app import config
+
+os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = config.HF_HUB_ENABLE_HF_TRANSFER
 
 # Import our custom audio processing utilities
 from audio_processing_utils import enhance_multi_speaker_audio, normalize_audio_volume
@@ -35,8 +38,6 @@ except ImportError:
         print("⚠️ Whisper not available - voice samples will use dummy text")
 
 # Initialize model
-MODEL_PATH = "bosonai/higgs-audio-v2-generation-3B-base"
-AUDIO_TOKENIZER_PATH = "bosonai/higgs-audio-v2-tokenizer"
 
 # Determine device
 if torch.cuda.is_available():
@@ -68,7 +69,11 @@ def install_ffmpeg_if_needed():
         return False
     return True
 
-def convert_audio_to_standard_format(audio_path, target_sample_rate=24000, force_mono=False):
+def convert_audio_to_standard_format(
+    audio_path,
+    target_sample_rate=config.DEFAULT_SAMPLE_RATE,
+    force_mono=False,
+):
     """
     Convert any audio file to standard format using multiple fallback methods
     Returns: (audio_data_numpy, sample_rate) or raises exception
@@ -353,7 +358,7 @@ def enhanced_save_temp_audio_fixed(uploaded_voice, force_mono=False):
     else:
         raise ValueError("Invalid uploaded voice format - expected (sample_rate, audio_data) tuple")
 
-def load_audio_file_robust(file_path, target_sample_rate=24000):
+def load_audio_file_robust(file_path, target_sample_rate=config.DEFAULT_SAMPLE_RATE):
     """
     Load any audio file and convert to standard format
     """
@@ -414,8 +419,18 @@ def clear_caches():
     gc.collect()
     print("🧹 Cleared caches and freed memory")
 
-def get_cache_key(text, voice_ref=None, temperature=0.3, top_k=50, top_p=0.95, min_p=None, 
-                 repetition_penalty=1.0, ras_win_len=7, ras_win_max_num_repeat=2, do_sample=True):
+def get_cache_key(
+    text,
+    voice_ref=None,
+    temperature=config.DEFAULT_TEMPERATURE,
+    top_k=config.DEFAULT_TOP_K,
+    top_p=config.DEFAULT_TOP_P,
+    min_p=None,
+    repetition_penalty=config.DEFAULT_REPETITION_PENALTY,
+    ras_win_len=config.DEFAULT_RAS_WIN_LEN,
+    ras_win_max_num_repeat=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
+    do_sample=config.DEFAULT_DO_SAMPLE,
+):
     """Generate cache key for audio generation"""
     import hashlib
     key_str = f"{text}_{voice_ref}_{temperature}_{top_k}_{top_p}_{min_p}_{repetition_penalty}_{ras_win_len}_{ras_win_max_num_repeat}_{do_sample}"
@@ -423,9 +438,7 @@ def get_cache_key(text, voice_ref=None, temperature=0.3, top_k=50, top_p=0.95, m
 
 # Create output directories - simplified
 def create_output_directories():
-    base_dirs = ["output/basic_generation", "output/voice_cloning", "output/longform_generation", "output/multi_speaker", "voice_library"]
-    
-    for dir_path in base_dirs:
+    for dir_path in config.OUTPUT_DIRECTORIES:
         os.makedirs(dir_path, exist_ok=True)
 
 # Initialize output directories
@@ -435,7 +448,7 @@ def get_output_path(category, filename_base, extension=".wav"):
     """Generate organized output paths with timestamps"""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"{timestamp}_{filename_base}{extension}"
-    output_path = os.path.join("output", category, filename)
+    output_path = os.path.join(config.OUTPUT_BASE_DIR, category, filename)
     
     # Ensure the directory exists
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -455,43 +468,33 @@ def save_audio_reference_if_enabled(audio_path, category, filename_base):
 # Voice library management
 def get_voice_library_voices():
     """Get list of voices in the voice library"""
-    voice_library_dir = "voice_library"
+    voice_library_dir = config.VOICE_LIBRARY_DIR
     voices = []
     if os.path.exists(voice_library_dir):
         for f in os.listdir(voice_library_dir):
-            if f.endswith('.wav'):
-                voice_name = f.replace('.wav', '')
+            if f.endswith(config.VOICE_LIBRARY_AUDIO_EXTENSION):
+                voice_name = f.replace(config.VOICE_LIBRARY_AUDIO_EXTENSION, '')
                 voices.append(voice_name)
     return voices
 
 def get_voice_config_path(voice_name):
     """Get the config file path for a voice"""
-    return os.path.join("voice_library", f"{voice_name}_config.json")
+    return os.path.join(
+        config.VOICE_LIBRARY_DIR,
+        f"{voice_name}{config.VOICE_LIBRARY_CONFIG_SUFFIX}"
+    )
 
 def get_default_voice_config():
     """Get default generation parameters for a voice"""
-    return {
-        "temperature": 0.3,
-        "max_new_tokens": 1024,
-        "seed": 12345,
-        "top_k": 50,
-        "top_p": 0.95,
-        "min_p": 0.0,
-        "repetition_penalty": 1.0,
-        "ras_win_len": 7,
-        "ras_win_max_num_repeat": 2,
-        "do_sample": True,
-        "description": "",
-        "tags": []
-    }
+    return deepcopy(config.DEFAULT_VOICE_CONFIG)
 
-def save_voice_config(voice_name, config):
+def save_voice_config(voice_name, voice_config_data):
     """Save generation parameters for a voice"""
     import json
     config_path = get_voice_config_path(voice_name)
     try:
         with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(config, f, indent=2)
+            json.dump(voice_config_data, f, indent=2)
         return True
     except Exception as e:
         print(f"Error saving voice config: {e}")
@@ -517,7 +520,10 @@ def save_voice_to_library(audio_data, sample_rate, voice_name):
         return "❌ Please enter a voice name"
     
     voice_name = voice_name.strip().replace(' ', '_')
-    voice_path = os.path.join("voice_library", f"{voice_name}.wav")
+    voice_path = os.path.join(
+        config.VOICE_LIBRARY_DIR,
+        f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
+    )
     
     # Check if voice already exists
     if os.path.exists(voice_path):
@@ -531,7 +537,10 @@ def save_voice_to_library(audio_data, sample_rate, voice_name):
         
         # Create transcript using Whisper
         transcription = transcribe_audio(voice_path)
-        txt_path = voice_path.replace('.wav', '.txt')
+        txt_path = voice_path.replace(
+            config.VOICE_LIBRARY_AUDIO_EXTENSION,
+            config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
+        )
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write(transcription)
         
@@ -549,8 +558,14 @@ def delete_voice_from_library(voice_name):
     if not voice_name or voice_name == "None":
         return "❌ Please select a voice to delete"
     
-    voice_path = os.path.join("voice_library", f"{voice_name}.wav")
-    txt_path = os.path.join("voice_library", f"{voice_name}.txt")
+    voice_path = os.path.join(
+        config.VOICE_LIBRARY_DIR,
+        f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
+    )
+    txt_path = os.path.join(
+        config.VOICE_LIBRARY_DIR,
+        f"{voice_name}{config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION}"
+    )
     
     try:
         if os.path.exists(voice_path):
@@ -563,59 +578,72 @@ def delete_voice_from_library(voice_name):
 
 def get_all_available_voices():
     """Get combined list of predefined voices and voice library"""
-    voice_prompts_dir = "examples/voice_prompts"
-    predefined = [f for f in os.listdir(voice_prompts_dir) if f.endswith(('.wav', '.mp3'))] if os.path.exists(voice_prompts_dir) else []
+    voice_prompts_dir = config.VOICE_PROMPTS_DIR
+    predefined = [
+        f for f in os.listdir(voice_prompts_dir)
+        if f.endswith((config.VOICE_LIBRARY_AUDIO_EXTENSION, '.mp3'))
+    ] if os.path.exists(voice_prompts_dir) else []
     library = get_voice_library_voices()
     
-    combined = ["None (Smart Voice)"]
+    combined = [config.SMART_VOICE_LABEL]
     if predefined:
-        combined.extend([f"📁 {voice}" for voice in predefined])
+        combined.extend([f"{config.PREDEFINED_VOICE_PREFIX}{voice}" for voice in predefined])
     if library:
-        combined.extend([f"👤 {voice}" for voice in library])
+        combined.extend([f"{config.LIBRARY_VOICE_PREFIX}{voice}" for voice in library])
     
     return combined
 
 def get_voice_path(voice_selection):
     """Get the actual path for a voice selection"""
-    if not voice_selection or voice_selection == "None (Smart Voice)":
+    if not voice_selection or voice_selection == config.SMART_VOICE_LABEL:
         return None
     
-    if voice_selection.startswith("📁 "):
+    if voice_selection.startswith(config.PREDEFINED_VOICE_PREFIX):
         # Predefined voice
-        voice_name = voice_selection[2:]
-        return os.path.join(voice_prompts_dir, voice_name)
-    elif voice_selection.startswith("👤 "):
+        voice_name = voice_selection[len(config.PREDEFINED_VOICE_PREFIX):]
+        return os.path.join(config.VOICE_PROMPTS_DIR, voice_name)
+    elif voice_selection.startswith(config.LIBRARY_VOICE_PREFIX):
         # Library voice
-        voice_name = voice_selection[2:]
-        return os.path.join("voice_library", f"{voice_name}.wav")
+        voice_name = voice_selection[len(config.LIBRARY_VOICE_PREFIX):]
+        return os.path.join(
+            config.VOICE_LIBRARY_DIR,
+            f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
+        )
     
     return None
 
 def apply_voice_config_to_generation(voice_selection, transcript, scene_description="", force_audio_gen=False):
     """Apply a voice's saved configuration to generate audio"""
-    if not voice_selection or voice_selection == "None (Smart Voice)":
+    if not voice_selection or voice_selection == config.SMART_VOICE_LABEL:
         return None
     
     # Extract voice name from selection
     voice_name = None
-    if voice_selection.startswith("👤 "):
-        voice_name = voice_selection[2:]  # Remove "👤 " prefix
+    if voice_selection.startswith(config.LIBRARY_VOICE_PREFIX):
+        voice_name = voice_selection[len(config.LIBRARY_VOICE_PREFIX):]
     
     if not voice_name:
         return None
     
     # Load voice configuration
-    config = load_voice_config(voice_name)
-    voice_path = os.path.join("voice_library", f"{voice_name}.wav")
+    voice_config = load_voice_config(voice_name)
+    voice_path = os.path.join(
+        config.VOICE_LIBRARY_DIR,
+        f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
+    )
     
     if not os.path.exists(voice_path):
         return None
     
     try:
         # Create messages using voice reference
-        system_content = "Generate audio following instruction."
+        system_content = config.DEFAULT_SYSTEM_MESSAGE
         if scene_description and scene_description.strip():
-            system_content += f" <|scene_desc_start|>\n{scene_description}\n<|scene_desc_end|>"
+            system_content += (
+                f" {config.SCENE_DESC_START_TAG}\n"
+                f"{scene_description}\n"
+                f"{config.SCENE_DESC_END_TAG}"
+            )
         
         messages = [
             Message(role="system", content=system_content),
@@ -625,12 +653,18 @@ def apply_voice_config_to_generation(voice_selection, transcript, scene_descript
         ]
         
         # Generate with voice's saved parameters
-        min_p_value = config['min_p'] if config['min_p'] > 0 else None
+        min_p_value = voice_config['min_p'] if voice_config['min_p'] > 0 else None
         output = optimized_generate_audio(
-            messages, config['max_new_tokens'], config['temperature'], 
-            config['top_k'], config['top_p'], min_p_value, 
-            config['repetition_penalty'], config['ras_win_len'], 
-            config['ras_win_max_num_repeat'], config['do_sample']
+            messages,
+            voice_config['max_new_tokens'],
+            voice_config['temperature'],
+            voice_config['top_k'],
+            voice_config['top_p'],
+            min_p_value,
+            voice_config['repetition_penalty'],
+            voice_config['ras_win_len'],
+            voice_config['ras_win_max_num_repeat'],
+            voice_config['do_sample'],
         )
         
         return output
@@ -640,8 +674,6 @@ def apply_voice_config_to_generation(voice_selection, transcript, scene_descript
         return None
 
 # Available voice prompts - this needs to be refreshed dynamically
-voice_prompts_dir = "examples/voice_prompts"
-
 def get_current_available_voices():
     """Get current available voices (refreshed each time)"""
     return get_all_available_voices()
@@ -652,7 +684,11 @@ def initialize_model():
     global serve_engine
     if serve_engine is None:
         print("🚀 Initializing Higgs Audio model...")
-        serve_engine = HiggsAudioServeEngine(MODEL_PATH, AUDIO_TOKENIZER_PATH, device=device)
+        serve_engine = HiggsAudioServeEngine(
+            config.MODEL_ID,
+            config.AUDIO_TOKENIZER_ID,
+            device=device,
+        )
         print("✅ Model initialized successfully")
 
 def initialize_whisper():
@@ -686,7 +722,7 @@ def initialize_whisper():
 def transcribe_audio(audio_path):
     """Transcribe audio file to text using Whisper"""
     if not WHISPER_AVAILABLE:
-        return "This is a voice sample for cloning."
+        return config.WHISPER_FALLBACK_TRANSCRIPTION
     
     try:
         initialize_whisper()
@@ -704,19 +740,18 @@ def transcribe_audio(audio_path):
                 transcription = result["text"]
         else:
             # Fallback
-            return "This is a voice sample for cloning."
+            return config.WHISPER_FALLBACK_TRANSCRIPTION
         
         # Clean up transcription
         transcription = transcription.strip()
         if not transcription:
-            transcription = "This is a voice sample for cloning."
+            transcription = config.WHISPER_FALLBACK_TRANSCRIPTION
         
         print(f"🎤 Transcribed: {transcription[:100]}...")
         return transcription
-        
     except Exception as e:
         print(f"❌ Transcription failed: {e}")
-        return "This is a voice sample for cloning."
+        return config.WHISPER_FALLBACK_TRANSCRIPTION
 
 def create_voice_reference_txt(audio_path, transcript_sample=None):
     """Create a corresponding .txt file for the voice reference with auto-transcription"""
@@ -730,7 +765,7 @@ def create_voice_reference_txt(audio_path, transcript_sample=None):
             base_path = audio_path[:-len(ext)]
             break
     
-    txt_path = base_path + '.txt'
+    txt_path = base_path + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
     
     if transcript_sample is None:
         # Auto-transcribe the audio
@@ -753,7 +788,7 @@ def robust_txt_path_creation(audio_path):
         if audio_path.endswith(ext):
             base_path = audio_path[:-len(ext)]
             break
-    return base_path + '.txt'
+    return base_path + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
 
 def robust_file_cleanup(files):
     """
@@ -966,7 +1001,7 @@ def optimized_generate_audio(messages, max_new_tokens, temperature, top_k=50, to
         "temperature": temperature,
         "top_p": top_p,
         "top_k": top_k,
-        "stop_strings": ["<|end_of_text|>", "<|eot_id|>"],
+    "stop_strings": list(config.STOP_STRINGS),
         "ras_win_len": ras_win_len,
         "ras_win_max_num_repeat": ras_win_max_num_repeat,
     }
@@ -982,7 +1017,7 @@ def optimized_generate_audio(messages, max_new_tokens, temperature, top_k=50, to
     if use_cache and cache_key:
         _audio_cache[cache_key] = output
         # Keep cache size manageable
-        if len(_audio_cache) > 50:
+        if len(_audio_cache) > config.DEFAULT_CACHE_MAX_ENTRIES:
             # Remove oldest entries
             oldest_key = next(iter(_audio_cache))
             del _audio_cache[oldest_key]
@@ -991,7 +1026,7 @@ def optimized_generate_audio(messages, max_new_tokens, temperature, top_k=50, to
 
 # VOICE LIBRARY FUNCTIONS
 
-def test_voice_sample(audio_data, sample_rate, test_text="Hello, this is a test of my voice. How does it sound?"):
+def test_voice_sample(audio_data, sample_rate, test_text=config.DEFAULT_TEST_VOICE_PROMPT):
     """Test a voice sample with default text before saving to library"""
     if audio_data is None:
         return None, "❌ Please upload an audio sample first"
@@ -1005,7 +1040,7 @@ def test_voice_sample(audio_data, sample_rate, test_text="Hello, this is a test 
         temp_txt_path = create_voice_reference_txt(temp_audio_path)
         
         # Generate test audio using voice cloning
-        system_content = "Generate audio following instruction."
+        system_content = config.DEFAULT_SYSTEM_MESSAGE
         messages = [
             Message(role="system", content=system_content),
             Message(role="user", content="Please speak this text."),
@@ -1014,10 +1049,15 @@ def test_voice_sample(audio_data, sample_rate, test_text="Hello, this is a test 
         ]
         
         # Generate audio
-        output = optimized_generate_audio(messages, 1024, 0.3, use_cache=False)
+        output = optimized_generate_audio(
+            messages,
+            config.DEFAULT_MAX_NEW_TOKENS,
+            config.DEFAULT_TEMPERATURE,
+            use_cache=False,
+        )
         
         # Save test output
-        test_output_path = "voice_test_output.wav"
+        test_output_path = config.VOICE_LIBRARY_TEST_OUTPUT_FILENAME
         torchaudio.save(test_output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
         
         # Clean up temp files
@@ -1040,15 +1080,15 @@ def generate_basic(
     max_new_tokens,
     seed,
     scene_description,
-    top_k=50,
-    top_p=0.95,
-    min_p=0.0,
-    repetition_penalty=1.0,
-    ras_win_len=7,
-    ras_win_max_num_repeat=2,
-    do_sample=True,
+    top_k=config.DEFAULT_TOP_K,
+    top_p=config.DEFAULT_TOP_P,
+    min_p=config.DEFAULT_MIN_P,
+    repetition_penalty=config.DEFAULT_REPETITION_PENALTY,
+    ras_win_len=config.DEFAULT_RAS_WIN_LEN,
+    ras_win_max_num_repeat=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
+    do_sample=config.DEFAULT_DO_SAMPLE,
     enable_normalization=False,
-    target_volume=0.15
+    target_volume=config.DEFAULT_TARGET_VOLUME
 ):
     # Initialize model if not already done
     initialize_model()
@@ -1059,12 +1099,16 @@ def generate_basic(
         np.random.seed(seed)
     
     # Prepare system message
-    system_content = "Generate audio following instruction."
+    system_content = config.DEFAULT_SYSTEM_MESSAGE
     if scene_description and scene_description.strip():
-        system_content += f" <|scene_desc_start|>\n{scene_description}\n<|scene_desc_end|>"
+        system_content += (
+            f" {config.SCENE_DESC_START_TAG}\n"
+            f"{scene_description}\n"
+            f"{config.SCENE_DESC_END_TAG}"
+        )
     
     # Handle voice selection using the same method as voice cloning tab
-    if voice_prompt and voice_prompt != "None (Smart Voice)":
+    if voice_prompt and voice_prompt != config.SMART_VOICE_LABEL:
         ref_audio_path = get_voice_path(voice_prompt)
         if ref_audio_path and os.path.exists(ref_audio_path):
             # Create corresponding txt file path using robust method
@@ -1081,7 +1125,7 @@ def generate_basic(
                     print(f"⚠️ Failed to transcribe {ref_audio_path}: {e}")
                     # Fallback to dummy text only if transcription fails
                     with open(txt_path, 'w', encoding='utf-8') as f:
-                        f.write("This is a voice sample.")
+                        f.write(config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT)
                     print(f"📝 Created fallback text file: {txt_path}")
             
             # Use the same pattern as working voice cloning
@@ -1112,7 +1156,7 @@ def generate_basic(
     )
     
     # Save and return audio with organized output
-    output_path = get_output_path("basic_generation", "basic_audio")
+    output_path = get_output_path(config.OUTPUT_BASIC_SUBDIR, "basic_audio")
     torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
     
     # Apply volume normalization if enabled
@@ -1132,7 +1176,11 @@ def generate_basic(
         # Create normalized output filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         normalized_filename = f"{timestamp}_normalized_basic_audio.wav"
-        normalized_path = os.path.join("output", "basic_generation", normalized_filename)
+        normalized_path = os.path.join(
+            config.OUTPUT_BASE_DIR,
+            config.OUTPUT_BASIC_SUBDIR,
+            normalized_filename,
+        )
         
         # Ensure output directory exists
         os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
@@ -1161,13 +1209,13 @@ def generate_voice_clone(
     temperature,
     max_new_tokens,
     seed,
-    top_k=50,
-    top_p=0.95,
-    min_p=0.0,
-    repetition_penalty=1.0,
-    ras_win_len=7,
-    ras_win_max_num_repeat=2,
-    do_sample=True
+    top_k=config.DEFAULT_TOP_K,
+    top_p=config.DEFAULT_TOP_P,
+    min_p=config.DEFAULT_MIN_P,
+    repetition_penalty=config.DEFAULT_REPETITION_PENALTY,
+    ras_win_len=config.DEFAULT_RAS_WIN_LEN,
+    ras_win_max_num_repeat=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
+    do_sample=config.DEFAULT_DO_SAMPLE
 ):
     # Initialize model if not already done
     initialize_model()
@@ -1197,7 +1245,7 @@ def generate_voice_clone(
         
         # Use the same pattern as the official generation.py
         # The serve engine expects the voice reference format like this:
-        system_content = "Generate audio following instruction."
+        system_content = config.DEFAULT_SYSTEM_MESSAGE
         
         # Create messages similar to how the official code does it
         # First, add the voice reference as a user-assistant pair
@@ -1216,7 +1264,7 @@ def generate_voice_clone(
         )
         
         # Save and return audio with organized output
-        output_path = get_output_path("voice_cloning", "cloned_voice")
+        output_path = get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice")
         torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
         clear_caches()  # Clear cache after generation
         return output_path
@@ -1231,13 +1279,13 @@ def generate_voice_clone_alternative(
     temperature,
     max_new_tokens,
     seed,
-    top_k=50,
-    top_p=0.95,
-    min_p=0.0,
-    repetition_penalty=1.0,
-    ras_win_len=7,
-    ras_win_max_num_repeat=2,
-    do_sample=True
+    top_k=config.DEFAULT_TOP_K,
+    top_p=config.DEFAULT_TOP_P,
+    min_p=config.DEFAULT_MIN_P,
+    repetition_penalty=config.DEFAULT_REPETITION_PENALTY,
+    ras_win_len=config.DEFAULT_RAS_WIN_LEN,
+    ras_win_max_num_repeat=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
+    do_sample=config.DEFAULT_DO_SAMPLE
 ):
     """Alternative voice cloning method using voice_ref format"""
     # Initialize model if not already done
@@ -1263,7 +1311,7 @@ def generate_voice_clone_alternative(
         temp_audio_path = enhanced_save_temp_audio_fixed(uploaded_voice)
         
         # Try the voice_ref format (this might be specific to newer versions)
-        system_content = "Generate audio following instruction."
+        system_content = config.DEFAULT_SYSTEM_MESSAGE
         
         # The format you were using - let's make sure the path is correct
         user_content = f"<|voice_ref_start|>\n{temp_audio_path}\n<|voice_ref_end|>\n\n{transcript}"
@@ -1281,7 +1329,7 @@ def generate_voice_clone_alternative(
         )
         
         # Save and return audio with organized output
-        output_path = get_output_path("voice_cloning", "cloned_voice_alt")
+        output_path = get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice_alt")
         torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
         clear_caches()  # Clear cache after generation
         return output_path
@@ -1331,8 +1379,8 @@ def generate_longform(
                 with open(temp_txt_path, 'r', encoding='utf-8') as f:
                     voice_ref_text = f.read().strip()
             else:
-                voice_ref_text = "This is a voice sample for cloning."
-        elif voice_choice == "Predefined Voice" and voice_prompt != "None (Smart Voice)":
+                voice_ref_text = config.WHISPER_FALLBACK_TRANSCRIPTION
+        elif voice_choice == "Predefined Voice" and voice_prompt != config.SMART_VOICE_LABEL:
             ref_audio_path = get_voice_path(voice_prompt)
             if ref_audio_path and os.path.exists(ref_audio_path):
                 voice_ref_path = ref_audio_path
@@ -1348,23 +1396,27 @@ def generate_longform(
                     except Exception as e:
                         print(f"⚠️ Failed to transcribe {ref_audio_path}: {e}")
                         with open(txt_path, 'w', encoding='utf-8') as f:
-                            f.write("This is a voice sample.")
+                            f.write(config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT)
                 
                 # Read transcription
                 if os.path.exists(txt_path):
                     with open(txt_path, 'r', encoding='utf-8') as f:
                         voice_ref_text = f.read().strip()
                 else:
-                    voice_ref_text = "This is a voice sample."
+                    voice_ref_text = config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT
         
         # Prepare system message
-        system_content = "Generate audio following instruction."
+        system_content = config.DEFAULT_SYSTEM_MESSAGE
         if scene_description and scene_description.strip():
-            system_content += f" <|scene_desc_start|>\n{scene_description}\n<|scene_desc_end|>"
+            system_content += (
+                f" {config.SCENE_DESC_START_TAG}\n"
+                f"{scene_description}\n"
+                f"{config.SCENE_DESC_END_TAG}"
+            )
         
         # Generate audio for each chunk
         full_audio = []
-        sampling_rate = 24000
+        sampling_rate = config.DEFAULT_SAMPLE_RATE
         
         for i, chunk in enumerate(chunks):
             print(f"Processing chunk {i+1}/{len(chunks)}: {chunk[:50]}...")
@@ -1429,7 +1481,7 @@ def generate_longform(
         if full_audio:
             full_audio = np.concatenate(full_audio, axis=0)
             
-            output_path = get_output_path("longform_generation", "longform_audio")
+            output_path = get_output_path(config.OUTPUT_LONGFORM_SUBDIR, "longform_audio")
             torchaudio.save(output_path, torch.from_numpy(full_audio)[None, :], sampling_rate)
             clear_caches()  # Clear cache after generation
             return output_path
@@ -1484,7 +1536,7 @@ def generate_multi_speaker(
     seed,
     scene_description,
     auto_format,
-    speaker_pause_duration=0.3
+    speaker_pause_duration=config.DEFAULT_SPEAKER_PAUSE_SECONDS
 ):
     # Initialize model if not already done
     initialize_model()
@@ -1532,7 +1584,7 @@ def generate_multi_speaker(
                             with open(temp_txt_path, 'r', encoding='utf-8') as f:
                                 transcription = f.read().strip()
                         else:
-                            transcription = "This is a voice sample for cloning."
+                            transcription = config.WHISPER_FALLBACK_TRANSCRIPTION
                         # Store both audio path and transcription for this speaker
                         uploaded_voice_refs[speaker_key] = (temp_path, transcription)
                         temp_files.extend([temp_path, temp_txt_path])
@@ -1545,7 +1597,7 @@ def generate_multi_speaker(
             # Handle predefined voices
             if predefined_voices:
                 for i, voice_name in enumerate(predefined_voices):
-                    if voice_name and voice_name != "None (Smart Voice)":
+                    if voice_name and voice_name != config.SMART_VOICE_LABEL:
                         speaker_key = f"SPEAKER{i}"
                         ref_audio_path = get_voice_path(voice_name)
                         if ref_audio_path and os.path.exists(ref_audio_path):
@@ -1563,17 +1615,21 @@ def generate_multi_speaker(
                                 except Exception as e:
                                     print(f"⚠️ Failed to transcribe {ref_audio_path}: {e}")
                                     with open(txt_path, 'w', encoding='utf-8') as f:
-                                        f.write("This is a voice sample.")
+                                        f.write(config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT)
         
         # Prepare system message - SAME AS WORKING VOICE CLONING
-        system_content = "Generate audio following instruction."
+        system_content = config.DEFAULT_SYSTEM_MESSAGE
         
         if scene_description and scene_description.strip():
-            system_content += f" <|scene_desc_start|>\n{scene_description}\n<|scene_desc_end|>"
+            system_content += (
+                f" {config.SCENE_DESC_START_TAG}\n"
+                f"{scene_description}\n"
+                f"{config.SCENE_DESC_END_TAG}"
+            )
         
         # Generate audio for each speaker segment
         full_audio = []
-        sampling_rate = 24000
+        sampling_rate = config.DEFAULT_SAMPLE_RATE
         
         # Process transcript line by line
         lines = transcript.split('\n')
@@ -1663,7 +1719,10 @@ def generate_multi_speaker(
                     time.sleep(0.1)
                     # CRITICAL: Use auto-transcription for voice reference
                     transcribed_text = transcribe_audio(speaker_audio_path)
-                    speaker_txt_path = speaker_audio_path.replace('.wav', '.txt')
+                    speaker_txt_path = speaker_audio_path.replace(
+                        config.VOICE_LIBRARY_AUDIO_EXTENSION,
+                        config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION,
+                    )
                     with open(speaker_txt_path, 'w', encoding='utf-8') as f:
                         f.write(transcribed_text)
                     # Save both audio path and the first text_content
@@ -1710,7 +1769,7 @@ def generate_multi_speaker(
         if full_audio:
             full_audio = np.concatenate(full_audio, axis=0)
             
-            output_path = get_output_path("multi_speaker", "multi_speaker_audio")
+            output_path = get_output_path(config.OUTPUT_MULTI_SPEAKER_SUBDIR, "multi_speaker_audio")
             torchaudio.save(output_path, torch.from_numpy(full_audio)[None, :], sampling_rate)
             
             print(f"🎉 Multi-speaker audio generated successfully: {output_path}")
@@ -1763,7 +1822,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                     with gr.Accordion("Voice Settings", open=True):
                         basic_voice_prompt = gr.Dropdown(
                             choices=available_voices,
-                            value="None (Smart Voice)",
+                            value=config.SMART_VOICE_LABEL,
                             label="Predefined Voice Prompts"
                         )
                         basic_refresh_voices = gr.Button("Refresh Voice List")
@@ -1780,7 +1839,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 basic_temperature = gr.Slider(
                                     minimum=0.1,
                                     maximum=1.0,
-                                    value=0.3,
+                                    value=config.DEFAULT_TEMPERATURE,
                                     step=0.05,
                                     label="Temperature",
                                     info="Controls randomness in generation (lower = more consistent)"
@@ -1788,13 +1847,13 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 basic_max_new_tokens = gr.Slider(
                                     minimum=128,
                                     maximum=2048,
-                                    value=1024,
+                                    value=config.DEFAULT_MAX_NEW_TOKENS,
                                     step=128,
                                     label="Max New Tokens"
                                 )
                                 basic_seed = gr.Number(
                                     label="Seed (0 for random)",
-                                    value=12345,
+                                    value=config.DEFAULT_SEED,
                                     precision=0
                                 )
                             
@@ -1802,7 +1861,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 basic_top_k = gr.Slider(
                                     minimum=1,
                                     maximum=100,
-                                    value=50,
+                                    value=config.DEFAULT_TOP_K,
                                     step=1,
                                     label="Top-K",
                                     info="Limits vocabulary to top K most likely tokens"
@@ -1810,7 +1869,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 basic_top_p = gr.Slider(
                                     minimum=0.1,
                                     maximum=1.0,
-                                    value=0.95,
+                                    value=config.DEFAULT_TOP_P,
                                     step=0.05,
                                     label="Top-P (Nucleus Sampling)",
                                     info="Cumulative probability threshold for token selection"
@@ -1818,7 +1877,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 basic_min_p = gr.Slider(
                                     minimum=0.0,
                                     maximum=0.2,
-                                    value=0.0,
+                                    value=config.DEFAULT_MIN_P,
                                     step=0.01,
                                     label="Min-P",
                                     info="Minimum probability threshold (0 = disabled)"
@@ -1830,14 +1889,14 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                     basic_repetition_penalty = gr.Slider(
                                         minimum=0.8,
                                         maximum=1.2,
-                                        value=1.0,
+                                        value=config.DEFAULT_REPETITION_PENALTY,
                                         step=0.05,
                                         label="Repetition Penalty",
                                         info="Penalty for repeating tokens (1.0 = no penalty)"
                                     )
                                     basic_do_sample = gr.Checkbox(
                                         label="Enable Sampling",
-                                        value=True,
+                                        value=config.DEFAULT_DO_SAMPLE,
                                         info="Use sampling vs greedy decoding"
                                     )
                                 
@@ -1845,18 +1904,18 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                     basic_ras_win_len = gr.Slider(
                                         minimum=0,
                                         maximum=20,
-                                        value=7,
+                                        value=config.DEFAULT_RAS_WIN_LEN,
                                         step=1,
                                         label="RAS Window Length",
                                         info="Repetition detection window (0 = disabled)"
                                     )
                                     basic_ras_win_max_num_repeat = gr.Slider(
-                                        minimum=1,
+                                        minimum=0,
                                         maximum=5,
-                                        value=2,
+                                        value=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
                                         step=1,
                                         label="RAS Max Repeats",
-                                        info="Maximum allowed repetitions in window"
+                                        info="Maximum repeats allowed in RAS window"
                                     )
                     
                     with gr.Accordion("🔊 Volume Normalization", open=False):
@@ -1922,7 +1981,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 vc_temperature = gr.Slider(
                                     minimum=0.1,
                                     maximum=1.0,
-                                    value=0.3,
+                                    value=config.DEFAULT_TEMPERATURE,
                                     step=0.05,
                                     label="Temperature",
                                     info="Controls randomness in generation (lower = more consistent)"
@@ -1930,13 +1989,13 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 vc_max_new_tokens = gr.Slider(
                                     minimum=128,
                                     maximum=2048,
-                                    value=1024,
+                                    value=config.DEFAULT_MAX_NEW_TOKENS,
                                     step=128,
                                     label="Max New Tokens"
                                 )
                                 vc_seed = gr.Number(
                                     label="Seed (0 for random)",
-                                    value=12345,
+                                    value=config.DEFAULT_SEED,
                                     precision=0
                                 )
                             
@@ -1944,7 +2003,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 vc_top_k = gr.Slider(
                                     minimum=1,
                                     maximum=100,
-                                    value=50,
+                                    value=config.DEFAULT_TOP_K,
                                     step=1,
                                     label="Top-K",
                                     info="Limits vocabulary to top K most likely tokens"
@@ -1952,7 +2011,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 vc_top_p = gr.Slider(
                                     minimum=0.1,
                                     maximum=1.0,
-                                    value=0.95,
+                                    value=config.DEFAULT_TOP_P,
                                     step=0.05,
                                     label="Top-P (Nucleus Sampling)",
                                     info="Cumulative probability threshold for token selection"
@@ -1960,7 +2019,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 vc_min_p = gr.Slider(
                                     minimum=0.0,
                                     maximum=0.2,
-                                    value=0.0,
+                                    value=config.DEFAULT_MIN_P,
                                     step=0.01,
                                     label="Min-P",
                                     info="Minimum probability threshold (0 = disabled)"
@@ -1972,14 +2031,14 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                     vc_repetition_penalty = gr.Slider(
                                         minimum=0.8,
                                         maximum=1.2,
-                                        value=1.0,
+                                        value=config.DEFAULT_REPETITION_PENALTY,
                                         step=0.05,
                                         label="Repetition Penalty",
                                         info="Penalty for repeating tokens (1.0 = no penalty)"
                                     )
                                     vc_do_sample = gr.Checkbox(
                                         label="Enable Sampling",
-                                        value=True,
+                                        value=config.DEFAULT_DO_SAMPLE,
                                         info="Use sampling vs greedy decoding"
                                     )
                                 
@@ -1987,7 +2046,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                     vc_ras_win_len = gr.Slider(
                                         minimum=0,
                                         maximum=20,
-                                        value=7,
+                                        value=config.DEFAULT_RAS_WIN_LEN,
                                         step=1,
                                         label="RAS Window Length",
                                         info="Repetition detection window (0 = disabled)"
@@ -1995,7 +2054,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                     vc_ras_win_max_num_repeat = gr.Slider(
                                         minimum=1,
                                         maximum=5,
-                                        value=2,
+                                        value=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
                                         step=1,
                                         label="RAS Max Repeats",
                                         info="Maximum allowed repetitions in window"
@@ -2044,7 +2103,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                         with gr.Group(visible=False) as lf_predefined_group:
                             lf_voice_prompt = gr.Dropdown(
                                 choices=available_voices,
-                                value="None (Smart Voice)",
+                                value=config.SMART_VOICE_LABEL,
                                 label="Predefined Voice Prompts"
                             )
                             lf_refresh_voices = gr.Button("Refresh Voice List")
@@ -2059,20 +2118,20 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                         lf_temperature = gr.Slider(
                             minimum=0.1,
                             maximum=1.0,
-                            value=0.3,
+                            value=config.DEFAULT_TEMPERATURE,
                             step=0.05,
                             label="Temperature"
                         )
                         lf_max_new_tokens = gr.Slider(
                             minimum=128,
                             maximum=2048,
-                            value=1024,
+                            value=config.DEFAULT_MAX_NEW_TOKENS,
                             step=128,
                             label="Max New Tokens per Chunk"
                         )
                         lf_seed = gr.Number(
                             label="Seed (0 for random)",
-                            value=12345,
+                            value=config.DEFAULT_SEED,
                             precision=0
                         )
                         lf_chunk_size = gr.Slider(
@@ -2171,7 +2230,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                             for i in range(10):
                                 speaker_dropdown = gr.Dropdown(
                                     choices=get_current_available_voices(),
-                                    value="None (Smart Voice)",
+                                    value=config.SMART_VOICE_LABEL,
                                     label=f"Speaker {i} Voice",
                                     visible=False
                                 )
@@ -2189,20 +2248,20 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                         ms_temperature = gr.Slider(
                             minimum=0.1,
                             maximum=1.0,
-                            value=0.3,
+                            value=config.DEFAULT_TEMPERATURE,
                             step=0.05,
                             label="Temperature"
                         )
                         ms_max_new_tokens = gr.Slider(
                             minimum=128,
                             maximum=2048,
-                            value=1024,
+                            value=config.DEFAULT_MAX_NEW_TOKENS,
                             step=128,
                             label="Max New Tokens per Segment"
                         )
                         ms_seed = gr.Number(
                             label="Seed (0 for random)",
-                            value=12345,
+                            value=config.DEFAULT_SEED,
                             precision=0
                         )
                     
@@ -2224,9 +2283,9 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                                 )
                             with gr.Column(scale=2):
                                 ms_target_volume = gr.Slider(
-                                    0.05, 0.3, 
-                                    value=0.15, 
-                                    step=0.01, 
+                                    0.05, 0.3,
+                                    value=config.DEFAULT_TARGET_VOLUME,
+                                    step=0.01,
                                     label="Target Volume",
                                     info="RMS level (0.15 = moderate)"
                                 )
@@ -2234,9 +2293,9 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                     with gr.Accordion("⏸️ Speaker Timing", open=False):
                         gr.Markdown("*Control timing and pauses between different speakers*")
                         ms_speaker_pause = gr.Slider(
-                            0.0, 2.0, 
-                            value=0.3, 
-                            step=0.1, 
+                            0.0, 2.0,
+                            value=config.DEFAULT_SPEAKER_PAUSE_SECONDS,
+                            step=0.1,
                             label="Pause Between Speakers (seconds)",
                             info="Duration of silence when speakers change (0.0 = no pause, 0.3 = default)"
                         )
@@ -2282,28 +2341,28 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                         with gr.Row():
                             with gr.Column():
                                 vl_temperature = gr.Slider(
-                                    minimum=0.1, maximum=1.0, value=0.3, step=0.05,
+                                    minimum=0.1, maximum=1.0, value=config.DEFAULT_TEMPERATURE, step=0.05,
                                     label="Temperature", info="Controls randomness"
                                 )
                                 vl_max_new_tokens = gr.Slider(
-                                    minimum=128, maximum=2048, value=1024, step=128,
+                                    minimum=128, maximum=2048, value=config.DEFAULT_MAX_NEW_TOKENS, step=128,
                                     label="Max New Tokens"
                                 )
                                 vl_seed = gr.Number(
-                                    label="Seed (0 for random)", value=12345, precision=0
+                                    label="Seed (0 for random)", value=config.DEFAULT_SEED, precision=0
                                 )
                             
                             with gr.Column():
                                 vl_top_k = gr.Slider(
-                                    minimum=1, maximum=100, value=50, step=1,
+                                    minimum=1, maximum=100, value=config.DEFAULT_TOP_K, step=1,
                                     label="Top-K", info="Vocabulary limit"
                                 )
                                 vl_top_p = gr.Slider(
-                                    minimum=0.1, maximum=1.0, value=0.95, step=0.05,
+                                    minimum=0.1, maximum=1.0, value=config.DEFAULT_TOP_P, step=0.05,
                                     label="Top-P", info="Nucleus sampling"
                                 )
                                 vl_min_p = gr.Slider(
-                                    minimum=0.0, maximum=0.2, value=0.0, step=0.01,
+                                    minimum=0.0, maximum=0.2, value=config.DEFAULT_MIN_P, step=0.01,
                                     label="Min-P", info="Min probability (0 = disabled)"
                                 )
                         
@@ -2311,20 +2370,20 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                             with gr.Row():
                                 with gr.Column():
                                     vl_repetition_penalty = gr.Slider(
-                                        minimum=0.8, maximum=1.2, value=1.0, step=0.05,
+                                        minimum=0.8, maximum=1.2, value=config.DEFAULT_REPETITION_PENALTY, step=0.05,
                                         label="Repetition Penalty", info="Prevent repetition"
                                     )
                                     vl_do_sample = gr.Checkbox(
-                                        label="Enable Sampling", value=True, info="Use sampling vs greedy"
+                                        label="Enable Sampling", value=config.DEFAULT_DO_SAMPLE, info="Use sampling vs greedy"
                                     )
                                 
                                 with gr.Column():
                                     vl_ras_win_len = gr.Slider(
-                                        minimum=0, maximum=20, value=7, step=1,
+                                        minimum=0, maximum=20, value=config.DEFAULT_RAS_WIN_LEN, step=1,
                                         label="RAS Window Length", info="Repetition window"
                                     )
                                     vl_ras_win_max_num_repeat = gr.Slider(
-                                        minimum=1, maximum=5, value=2, step=1,
+                                        minimum=1, maximum=5, value=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT, step=1,
                                         label="RAS Max Repeats", info="Max allowed repeats"
                                     )
                     
@@ -2376,48 +2435,48 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                         with gr.Row():
                             with gr.Column():
                                 vl_edit_temperature = gr.Slider(
-                                    minimum=0.1, maximum=1.0, value=0.3, step=0.05,
+                                    minimum=0.1, maximum=1.0, value=config.DEFAULT_TEMPERATURE, step=0.05,
                                     label="Temperature"
                                 )
                                 vl_edit_max_new_tokens = gr.Slider(
-                                    minimum=128, maximum=2048, value=1024, step=128,
+                                    minimum=128, maximum=2048, value=config.DEFAULT_MAX_NEW_TOKENS, step=128,
                                     label="Max New Tokens"
                                 )
                                 vl_edit_seed = gr.Number(
-                                    label="Seed", value=12345, precision=0
+                                    label="Seed", value=config.DEFAULT_SEED, precision=0
                                 )
                             
                             with gr.Column():
                                 vl_edit_top_k = gr.Slider(
-                                    minimum=1, maximum=100, value=50, step=1,
+                                    minimum=1, maximum=100, value=config.DEFAULT_TOP_K, step=1,
                                     label="Top-K"
                                 )
                                 vl_edit_top_p = gr.Slider(
-                                    minimum=0.1, maximum=1.0, value=0.95, step=0.05,
+                                    minimum=0.1, maximum=1.0, value=config.DEFAULT_TOP_P, step=0.05,
                                     label="Top-P"
                                 )
                                 vl_edit_min_p = gr.Slider(
-                                    minimum=0.0, maximum=0.2, value=0.0, step=0.01,
+                                    minimum=0.0, maximum=0.2, value=config.DEFAULT_MIN_P, step=0.01,
                                     label="Min-P"
                                 )
                         
                         with gr.Row():
                             with gr.Column():
                                 vl_edit_repetition_penalty = gr.Slider(
-                                    minimum=0.8, maximum=1.2, value=1.0, step=0.05,
+                                    minimum=0.8, maximum=1.2, value=config.DEFAULT_REPETITION_PENALTY, step=0.05,
                                     label="Repetition Penalty"
                                 )
                                 vl_edit_do_sample = gr.Checkbox(
-                                    label="Enable Sampling", value=True
+                                    label="Enable Sampling", value=config.DEFAULT_DO_SAMPLE
                                 )
                             
                             with gr.Column():
                                 vl_edit_ras_win_len = gr.Slider(
-                                    minimum=0, maximum=20, value=7, step=1,
+                                    minimum=0, maximum=20, value=config.DEFAULT_RAS_WIN_LEN, step=1,
                                     label="RAS Window Length"
                                 )
                                 vl_edit_ras_win_max_num_repeat = gr.Slider(
-                                    minimum=1, maximum=5, value=2, step=1,
+                                    minimum=1, maximum=5, value=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT, step=1,
                                     label="RAS Max Repeats"
                                 )
                         
@@ -2486,7 +2545,10 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
             shutil.copy2(audio_data, temp_audio_path)
             
             # Create a corresponding text file for voice reference (isolated)
-            temp_txt_path = temp_audio_path.replace('.wav', '.txt')
+            temp_txt_path = temp_audio_path.replace(
+                config.VOICE_LIBRARY_AUDIO_EXTENSION,
+                config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION,
+            )
             
             # Auto-transcribe for voice reference
             try:
@@ -2500,7 +2562,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                 print(f"⚠️ Transcription failed, using fallback: {e}")
             
             # Create messages for voice generation
-            system_content = "Generate audio following instruction."
+            system_content = config.DEFAULT_SYSTEM_MESSAGE
             messages = [
                 Message(role="system", content=system_content),
                 Message(role="user", content="Please speak this text."),
@@ -2516,7 +2578,10 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
             )
             
             # Save test output to a clearly marked test location
-            test_output_path = get_output_path("voice_cloning", f"voice_test_{unique_id}")
+            test_output_path = get_output_path(
+                config.OUTPUT_VOICE_CLONING_SUBDIR,
+                f"voice_test_{unique_id}"
+            )
             torchaudio.save(test_output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
             
             return test_output_path, "✅ Voice test completed successfully!"
@@ -2554,7 +2619,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
             
             # If audio saved successfully, save custom config
             if status.startswith("✅"):
-                config = {
+                voice_config_data = {
                     "temperature": temperature,
                     "max_new_tokens": max_new_tokens,
                     "seed": seed,
@@ -2569,7 +2634,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                     "tags": []
                 }
                 
-                if save_voice_config(voice_name.strip(), config):
+                if save_voice_config(voice_name.strip(), voice_config_data):
                     return f"✅ Voice '{voice_name}' saved with custom parameters!"
                 else:
                     return f"⚠️ Voice saved but failed to save parameters"
@@ -2582,21 +2647,39 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
     def handle_voice_selection(voice_name):
         """Handle voice selection and load its configuration"""
         if not voice_name or voice_name == "None":
-            return ("*Select a voice to view details*", 
-                   0.3, 1024, 12345, 50, 0.95, 0.0, 1.0, 7, 2, True, "")
+            return (
+                "*Select a voice to view details*",
+                config.DEFAULT_TEMPERATURE,
+                config.DEFAULT_MAX_NEW_TOKENS,
+                config.DEFAULT_SEED,
+                config.DEFAULT_TOP_K,
+                config.DEFAULT_TOP_P,
+                config.DEFAULT_MIN_P,
+                config.DEFAULT_REPETITION_PENALTY,
+                config.DEFAULT_RAS_WIN_LEN,
+                config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
+                config.DEFAULT_DO_SAMPLE,
+                "",
+            )
         
         # Load voice configuration
-        config = load_voice_config(voice_name)
+        voice_config = load_voice_config(voice_name)
         
         # Get voice info
-        voice_path = os.path.join("voice_library", f"{voice_name}.wav")
-        txt_path = os.path.join("voice_library", f"{voice_name}.txt")
+        voice_path = os.path.join(
+            config.VOICE_LIBRARY_DIR,
+            f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
+        )
+        txt_path = os.path.join(
+            config.VOICE_LIBRARY_DIR,
+            f"{voice_name}{config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION}"
+        )
         
         info_text = f"## 🎤 {voice_name}\n\n"
         
         # Add description if available
-        if config.get("description"):
-            info_text += f"**Description:** {config['description']}\n\n"
+        if voice_config.get("description"):
+            info_text += f"**Description:** {voice_config['description']}\n\n"
         
         # Add transcript preview
         if os.path.exists(txt_path):
@@ -2611,16 +2694,25 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
         
         # Add parameter summary
         info_text += "**Current Parameters:**\n"
-        info_text += f"- Temperature: {config['temperature']}\n"
-        info_text += f"- Max Tokens: {config['max_new_tokens']}\n"
-        info_text += f"- Top-K: {config['top_k']}, Top-P: {config['top_p']}\n"
-        info_text += f"- RAS Window: {config['ras_win_len']}\n"
-        
-        return (info_text,
-                config['temperature'], config['max_new_tokens'], config['seed'],
-                config['top_k'], config['top_p'], config['min_p'], config['repetition_penalty'],
-                config['ras_win_len'], config['ras_win_max_num_repeat'], config['do_sample'],
-                config.get('description', ''))
+        info_text += f"- Temperature: {voice_config['temperature']}\n"
+        info_text += f"- Max Tokens: {voice_config['max_new_tokens']}\n"
+        info_text += f"- Top-K: {voice_config['top_k']}, Top-P: {voice_config['top_p']}\n"
+        info_text += f"- RAS Window: {voice_config['ras_win_len']}\n"
+
+        return (
+            info_text,
+            voice_config['temperature'],
+            voice_config['max_new_tokens'],
+            voice_config['seed'],
+            voice_config['top_k'],
+            voice_config['top_p'],
+            voice_config['min_p'],
+            voice_config['repetition_penalty'],
+            voice_config['ras_win_len'],
+            voice_config['ras_win_max_num_repeat'],
+            voice_config['do_sample'],
+            voice_config.get('description', ''),
+        )
     
     def handle_save_voice_changes(voice_name, description, temperature, max_new_tokens, seed,
                                  top_k, top_p, min_p, repetition_penalty, ras_win_len, 
@@ -2630,7 +2722,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
             return "❌ Please select a voice first"
         
         try:
-            config = {
+            voice_config_data = {
                 "temperature": temperature,
                 "max_new_tokens": max_new_tokens,
                 "seed": seed,
@@ -2645,7 +2737,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                 "tags": []
             }
             
-            if save_voice_config(voice_name, config):
+            if save_voice_config(voice_name, voice_config_data):
                 return f"✅ Updated parameters for '{voice_name}'"
             else:
                 return f"❌ Failed to save changes for '{voice_name}'"
@@ -2659,8 +2751,14 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
             return "❌ Please select a voice first"
         
         try:
-            voice_path = os.path.join("voice_library", f"{voice_name}.wav")
-            txt_path = os.path.join("voice_library", f"{voice_name}.txt")
+            voice_path = os.path.join(
+                config.VOICE_LIBRARY_DIR,
+                f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
+            )
+            txt_path = os.path.join(
+                config.VOICE_LIBRARY_DIR,
+                f"{voice_name}{config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION}"
+            )
             config_path = get_voice_config_path(voice_name)
             
             files_deleted = []
@@ -2803,7 +2901,7 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                 updates.append(gr.update(
                     visible=True,
                     label=f"{speaker_name} Voice",
-                    value="None (Smart Voice)"
+                    value=config.SMART_VOICE_LABEL
                 ))
             else:
                 updates.append(gr.update(visible=False))
@@ -2833,7 +2931,9 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                 content += f"**{speaker}** → Use dropdown to select voice\n"
             
             content += f"\n**Available voices:** {', '.join(available_voices)}\n\n"
-            content += "*💡 Select 'None (Smart Voice)' to let AI pick a voice for that character*\n"
+            content += (
+                f"*💡 Select '{config.SMART_VOICE_LABEL}' to let AI pick a voice for that character*\n"
+            )
             content += "*💡 Click 'Refresh Voice Library' if you've added new voices*"
             return gr.update(value=content)
         
@@ -2904,10 +3004,14 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
                 num_speakers = len(speaker_mapping)
                 
                 for i in range(max(3, num_speakers)):  # Ensure at least 3 for compatibility
-                    if i < len(library_selections) and library_selections[i] and library_selections[i] != "None (Smart Voice)":
+                    if (
+                        i < len(library_selections)
+                        and library_selections[i]
+                        and library_selections[i] != config.SMART_VOICE_LABEL
+                    ):
                         predefined_voices.append(library_selections[i])
                     else:
-                        predefined_voices.append("None (Smart Voice)")
+                        predefined_voices.append(config.SMART_VOICE_LABEL)
                 
                 print(f"🎭 Using library voices: {predefined_voices[:num_speakers]}")
                 
