@@ -5,7 +5,6 @@ import re
 import sys
 import tempfile
 import time
-from copy import deepcopy
 from datetime import datetime
 
 import gradio as gr
@@ -13,7 +12,7 @@ import numpy as np
 import torch
 import torchaudio
 
-from app import audio_io, config, startup
+from app import audio_io, config, startup, voice_library as voice_lib
 from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
 from boson_multimodal.serve.serve_engine import (HiggsAudioResponse,
                                                  HiggsAudioServeEngine)
@@ -24,32 +23,20 @@ startup.configure_environment()
 from audio_processing_utils import (enhance_multi_speaker_audio,
                                     normalize_audio_volume)
 
-# Whisper for auto-transcription
-try:
-    from faster_whisper import WhisperModel
-    WHISPER_AVAILABLE = True
-    print("✅ Using faster-whisper for transcription")
-except ImportError:
-    try:
-        import whisper
-        WHISPER_AVAILABLE = True
-        print("✅ Using openai-whisper for transcription")
-    except ImportError:
-        WHISPER_AVAILABLE = False
-        print("⚠️ Whisper not available - voice samples will use dummy text")
-
 # Initialize model
 
 device = startup.select_device()
 
 # Global instances
 serve_engine = None
-whisper_model = None
 
 # Cache management for optimizations
 _audio_cache, _token_cache = startup.initialize_caches()
 
 startup.ensure_output_directories()
+
+voice_library_service = voice_lib.create_default_voice_library()
+WHISPER_AVAILABLE = voice_lib.WHISPER_AVAILABLE
 
 def clear_caches():
     """Clear audio and token caches to free memory"""
@@ -81,150 +68,48 @@ def get_cache_key(
 
 # Voice library management
 def get_voice_library_voices():
-    """Get list of voices in the voice library"""
-    voice_library_dir = config.VOICE_LIBRARY_DIR
-    voices = []
-    if os.path.exists(voice_library_dir):
-        for f in os.listdir(voice_library_dir):
-            if f.endswith(config.VOICE_LIBRARY_AUDIO_EXTENSION):
-                voice_name = f.replace(config.VOICE_LIBRARY_AUDIO_EXTENSION, '')
-                voices.append(voice_name)
-    return voices
+    """Proxy for listing voices in the library."""
+    return voice_library_service.list_voice_library_voices()
+
 
 def get_voice_config_path(voice_name):
-    """Get the config file path for a voice"""
-    return os.path.join(
-        config.VOICE_LIBRARY_DIR,
-        f"{voice_name}{config.VOICE_LIBRARY_CONFIG_SUFFIX}"
-    )
+    """Get the config file path for a voice."""
+    return voice_library_service.get_voice_config_path(voice_name)
+
 
 def get_default_voice_config():
-    """Get default generation parameters for a voice"""
-    return deepcopy(config.DEFAULT_VOICE_CONFIG)
+    """Return the default voice configuration."""
+    return voice_library_service.get_default_voice_config()
+
 
 def save_voice_config(voice_name, voice_config_data):
-    """Save generation parameters for a voice"""
-    import json
-    config_path = get_voice_config_path(voice_name)
-    try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            json.dump(voice_config_data, f, indent=2)
-        return True
-    except Exception as e:
-        print(f"Error saving voice config: {e}")
-        return False
+    """Persist configuration data for a voice."""
+    return voice_library_service.save_voice_config(voice_name, voice_config_data)
+
 
 def load_voice_config(voice_name):
-    """Load generation parameters for a voice"""
-    import json
-    config_path = get_voice_config_path(voice_name)
-    if os.path.exists(config_path):
-        try:
-            with open(config_path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-        except Exception as e:
-            print(f"Error loading voice config: {e}")
-    
-    # Return default config if file doesn't exist or can't be loaded
-    return get_default_voice_config()
+    """Load configuration data for a voice."""
+    return voice_library_service.load_voice_config(voice_name)
+
 
 def save_voice_to_library(audio_data, sample_rate, voice_name):
-    """Save a voice sample to the voice library"""
-    if not voice_name or not voice_name.strip():
-        return "❌ Please enter a voice name"
-    
-    voice_name = voice_name.strip().replace(' ', '_')
-    voice_path = os.path.join(
-        config.VOICE_LIBRARY_DIR,
-        f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
-    )
-    
-    # Check if voice already exists
-    if os.path.exists(voice_path):
-        return f"❌ Voice '{voice_name}' already exists in library"
-    
-    try:
-        # Save audio using robust method
-        temp_path = audio_io.save_temp_audio_robust(audio_data, sample_rate)
-        import shutil
-        shutil.move(temp_path, voice_path)
-        
-        # Create transcript using Whisper
-        transcription = transcribe_audio(voice_path)
-        txt_path = voice_path.replace(
-            config.VOICE_LIBRARY_AUDIO_EXTENSION,
-            config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
-        )
-        with open(txt_path, 'w', encoding='utf-8') as f:
-            f.write(transcription)
-        
-        # Create default config file for the voice
-        default_config = get_default_voice_config()
-        save_voice_config(voice_name, default_config)
-        
-        return f"✅ Voice '{voice_name}' saved to library with default settings!"
-    
-    except Exception as e:
-        return f"❌ Error saving voice: {str(e)}"
+    """Save a new voice to the library."""
+    return voice_library_service.save_voice(audio_data, sample_rate, voice_name)
+
 
 def delete_voice_from_library(voice_name):
-    """Delete a voice from the library"""
-    if not voice_name or voice_name == "None":
-        return "❌ Please select a voice to delete"
-    
-    voice_path = os.path.join(
-        config.VOICE_LIBRARY_DIR,
-        f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
-    )
-    txt_path = os.path.join(
-        config.VOICE_LIBRARY_DIR,
-        f"{voice_name}{config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION}"
-    )
-    
-    try:
-        if os.path.exists(voice_path):
-            os.remove(voice_path)
-        if os.path.exists(txt_path):
-            os.remove(txt_path)
-        return f"✅ Voice '{voice_name}' deleted from library"
-    except Exception as e:
-        return f"❌ Error deleting voice: {str(e)}"
+    """Delete a voice from the library."""
+    return voice_library_service.delete_voice(voice_name)
+
 
 def get_all_available_voices():
-    """Get combined list of predefined voices and voice library"""
-    voice_prompts_dir = config.VOICE_PROMPTS_DIR
-    predefined = [
-        f for f in os.listdir(voice_prompts_dir)
-        if f.endswith((config.VOICE_LIBRARY_AUDIO_EXTENSION, '.mp3'))
-    ] if os.path.exists(voice_prompts_dir) else []
-    library = get_voice_library_voices()
-    
-    combined = [config.SMART_VOICE_LABEL]
-    if predefined:
-        combined.extend([f"{config.PREDEFINED_VOICE_PREFIX}{voice}" for voice in predefined])
-    if library:
-        combined.extend([f"{config.LIBRARY_VOICE_PREFIX}{voice}" for voice in library])
-    
-    return combined
+    """Return the full list of selectable voices."""
+    return voice_library_service.list_all_available_voices()
+
 
 def get_voice_path(voice_selection):
-    """Get the actual path for a voice selection"""
-    if not voice_selection or voice_selection == config.SMART_VOICE_LABEL:
-        return None
-    
-    if voice_selection.startswith(config.PREDEFINED_VOICE_PREFIX):
-        # Predefined voice
-        voice_name = voice_selection[len(config.PREDEFINED_VOICE_PREFIX):]
-        return os.path.join(config.VOICE_PROMPTS_DIR, voice_name)
-    elif voice_selection.startswith(config.LIBRARY_VOICE_PREFIX):
-        # Library voice
-        voice_name = voice_selection[len(config.LIBRARY_VOICE_PREFIX):]
-        return os.path.join(
-            config.VOICE_LIBRARY_DIR,
-            f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
-        )
-    
-    return None
+    """Resolve a voice selection to a filesystem path."""
+    return voice_library_service.get_voice_path(voice_selection)
 
 def apply_voice_config_to_generation(voice_selection, transcript, scene_description="", force_audio_gen=False):
     """Apply a voice's saved configuration to generate audio"""
@@ -241,12 +126,9 @@ def apply_voice_config_to_generation(voice_selection, transcript, scene_descript
     
     # Load voice configuration
     voice_config = load_voice_config(voice_name)
-    voice_path = os.path.join(
-        config.VOICE_LIBRARY_DIR,
-        f"{voice_name}{config.VOICE_LIBRARY_AUDIO_EXTENSION}"
-    )
-    
-    if not os.path.exists(voice_path):
+    voice_path = get_voice_path(f"{config.LIBRARY_VOICE_PREFIX}{voice_name}")
+
+    if not voice_path or not os.path.exists(voice_path):
         return None
     
     try:
@@ -305,104 +187,22 @@ def initialize_model():
         )
         print("✅ Model initialized successfully")
 
-def initialize_whisper():
-    global whisper_model
-    global WHISPER_AVAILABLE
-    if whisper_model is None and WHISPER_AVAILABLE:
-        try:
-            # Try faster-whisper first if it was imported
-            if 'WhisperModel' in globals():
-                whisper_model = WhisperModel("large-v3", device="cuda" if torch.cuda.is_available() else "cpu")
-                print("✅ Loaded faster-whisper model")
-            else:
-                # Use openai-whisper
-                import whisper
-                whisper_model = whisper.load_model("large")
-                print("✅ Loaded openai-whisper model")
-        except Exception as e:
-            print(f"⚠️ Failed to load whisper model: {e}")
-            # Try base model as fallback
-            try:
-                if 'WhisperModel' in globals():
-                    whisper_model = WhisperModel("base", device="cuda" if torch.cuda.is_available() else "cpu")
-                else:
-                    import whisper
-                    whisper_model = whisper.load_model("base")
-                print("✅ Loaded whisper base model as fallback")
-            except Exception as e2:
-                print(f"❌ Failed to load any whisper model: {e2}")
-                WHISPER_AVAILABLE = False
-
 def transcribe_audio(audio_path):
-    """Transcribe audio file to text using Whisper"""
-    if not WHISPER_AVAILABLE:
-        return config.WHISPER_FALLBACK_TRANSCRIPTION
-    
-    try:
-        initialize_whisper()
-        
-        # More robust whisper model type detection
-        if hasattr(whisper_model, 'transcribe'):
-            # Check if it's faster-whisper by looking for specific attributes
-            if hasattr(whisper_model, 'model') and hasattr(whisper_model, 'feature_extractor'):
-                # Using faster-whisper
-                segments, info = whisper_model.transcribe(audio_path, language="en")
-                transcription = " ".join([segment.text for segment in segments])
-            else:
-                # Using openai-whisper
-                result = whisper_model.transcribe(audio_path)
-                transcription = result["text"]
-        else:
-            # Fallback
-            return config.WHISPER_FALLBACK_TRANSCRIPTION
-        
-        # Clean up transcription
-        transcription = transcription.strip()
-        if not transcription:
-            transcription = config.WHISPER_FALLBACK_TRANSCRIPTION
-        
-        print(f"🎤 Transcribed: {transcription[:100]}...")
-        return transcription
-    except Exception as e:
-        print(f"❌ Transcription failed: {e}")
-        return config.WHISPER_FALLBACK_TRANSCRIPTION
+    """Transcribe audio file to text using the voice library module."""
+    return voice_lib.transcribe_audio(audio_path)
+
 
 def create_voice_reference_txt(audio_path, transcript_sample=None):
-    """Create a corresponding .txt file for the voice reference with auto-transcription"""
-    # Robust extension handling - handles all common audio extensions case-insensitively
-    base_path = audio_path
-    audio_extensions = ['.wav', '.WAV', '.mp3', '.MP3', '.flac', '.FLAC', '.m4a', '.M4A', '.ogg', '.OGG']
+    """Create a corresponding transcript for an audio file."""
+    return voice_library_service.create_voice_reference_txt(audio_path, transcript_sample)
 
-    
-    for ext in audio_extensions:
-        if audio_path.endswith(ext):
-            base_path = audio_path[:-len(ext)]
-            break
-    
-    txt_path = base_path + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
-    
-    if transcript_sample is None:
-        # Auto-transcribe the audio
-        transcript_sample = transcribe_audio(audio_path)
-    
-    with open(txt_path, 'w', encoding='utf-8') as f:
-        f.write(transcript_sample)
-    
-    print(f"📝 Created voice reference text: {txt_path}")
-    return txt_path
 
 def robust_txt_path_creation(audio_path):
     """
     Given an audio file path, returns the corresponding .txt path,
     handling all common audio extensions case-insensitively.
     """
-    base_path = audio_path
-    audio_extensions = ['.wav', '.WAV', '.mp3', '.MP3', '.flac', '.FLAC', '.m4a', '.M4A', '.ogg', '.OGG']
-    for ext in audio_extensions:
-        if audio_path.endswith(ext):
-            base_path = audio_path[:-len(ext)]
-            break
-    return base_path + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
+    return voice_library_service.robust_txt_path_creation(audio_path)
 
 
 def parse_multi_speaker_text(text):
