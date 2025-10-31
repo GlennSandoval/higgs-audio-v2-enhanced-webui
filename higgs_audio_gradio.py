@@ -13,14 +13,13 @@ import numpy as np
 import torch
 import torchaudio
 from pydub import AudioSegment
-from pydub.utils import which
 
-from app import config
+from app import config, startup
 from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
 from boson_multimodal.serve.serve_engine import (HiggsAudioResponse,
                                                  HiggsAudioServeEngine)
 
-os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = config.HF_HUB_ENABLE_HF_TRANSFER
+startup.configure_environment()
 
 # Import our custom audio processing utilities
 from audio_processing_utils import (enhance_multi_speaker_audio,
@@ -42,35 +41,16 @@ except ImportError:
 
 # Initialize model
 
-# Determine device
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-# Simplified MPS check for broader compatibility
-elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-    # Basic check is usually sufficient, detailed check can be problematic
-    device = torch.device("mps")
-else:
-    device = torch.device("cpu")
-
-print(f"Using device: {device}")
+device = startup.select_device()
 
 # Global instances
 serve_engine = None
 whisper_model = None
 
 # Cache management for optimizations
-_audio_cache = {}
-_token_cache = {}
+_audio_cache, _token_cache = startup.initialize_caches()
 
-def install_ffmpeg_if_needed():
-    """Check if ffmpeg is available and provide installation instructions if not"""
-    if which("ffmpeg") is None:
-        print("⚠️ FFmpeg not found. For full audio format support, install FFmpeg:")
-        print("   Windows: Download from https://ffmpeg.org/download.html")
-        print("   macOS: brew install ffmpeg")
-        print("   Linux: sudo apt install ffmpeg")
-        return False
-    return True
+startup.ensure_output_directories()
 
 def convert_audio_to_standard_format(
     audio_path,
@@ -370,35 +350,6 @@ def load_audio_file_robust(file_path, target_sample_rate=config.DEFAULT_SAMPLE_R
     
     return convert_audio_to_standard_format(file_path, target_sample_rate)
 
-def check_dependencies():
-    """Check and report on available audio processing libraries"""
-    print("🔍 Checking audio processing dependencies...")
-    
-    dependencies = {
-        "torchaudio": True,  # Should always be available in your setup
-        "pydub": False,
-        "scipy": False,
-        "ffmpeg": False
-    }
-    
-    try:
-        import pydub
-        dependencies["pydub"] = True
-        print("✅ pydub available")
-    except ImportError:
-        print("⚠️ pydub not available - install with: pip install pydub")
-    
-    try:
-        import scipy.io
-        dependencies["scipy"] = True
-        print("✅ scipy available")
-    except ImportError:
-        print("⚠️ scipy not available - install with: pip install scipy")
-    
-    dependencies["ffmpeg"] = install_ffmpeg_if_needed()
-    
-    return dependencies
-
 def safe_audio_processing(uploaded_voice, operation_name):
     """Wrapper for safe audio processing with detailed error messages"""
     try:
@@ -438,14 +389,6 @@ def get_cache_key(
     import hashlib
     key_str = f"{text}_{voice_ref}_{temperature}_{top_k}_{top_p}_{min_p}_{repetition_penalty}_{ras_win_len}_{ras_win_max_num_repeat}_{do_sample}"
     return hashlib.sha256(key_str.encode()).hexdigest()
-
-# Create output directories - simplified
-def create_output_directories():
-    for dir_path in config.OUTPUT_DIRECTORIES:
-        os.makedirs(dir_path, exist_ok=True)
-
-# Initialize output directories
-create_output_directories()
 
 def get_output_path(category, filename_base, extension=".wav"):
     """Generate organized output paths with timestamps"""
@@ -1804,7 +1747,7 @@ def refresh_library_list():
     return gr.update(choices=library_voices)
 
 # Check audio processing capabilities at startup
-check_dependencies()
+startup.check_audio_dependencies()
 
 # Gradio interface
 with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
@@ -3296,4 +3239,3 @@ if __name__ == "__main__":
         server_port=args.server_port,
         show_error=True
     )
-
