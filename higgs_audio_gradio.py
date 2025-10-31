@@ -1,27 +1,30 @@
+import argparse
+import gc
+import os
+import re
+import sys
+import tempfile
+import time
+from copy import deepcopy
+from datetime import datetime
+
 import gradio as gr
+import numpy as np
 import torch
 import torchaudio
-import os
-import sys
-import argparse
-from copy import deepcopy
-from boson_multimodal.serve.serve_engine import HiggsAudioServeEngine, HiggsAudioResponse
-from boson_multimodal.data_types import ChatMLSample, Message, AudioContent
-import numpy as np
-import tempfile
-import re
-import gc
-import time
-from datetime import datetime
 from pydub import AudioSegment
 from pydub.utils import which
 
 from app import config
+from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
+from boson_multimodal.serve.serve_engine import (HiggsAudioResponse,
+                                                 HiggsAudioServeEngine)
 
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = config.HF_HUB_ENABLE_HF_TRANSFER
 
 # Import our custom audio processing utilities
-from audio_processing_utils import enhance_multi_speaker_audio, normalize_audio_volume
+from audio_processing_utils import (enhance_multi_speaker_audio,
+                                    normalize_audio_volume)
 
 # Whisper for auto-transcription
 try:
