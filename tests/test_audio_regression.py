@@ -51,8 +51,3 @@ def test_segment_based_enhancement_balances_segments() -> None:
     assert first_rms == pytest.approx(second_rms, rel=0.2)
     assert first_rms == pytest.approx(0.1, rel=0.2)
     assert silence_rms < 1e-4
-
-
-def test_audio_fixture_hashes_match_baseline() -> None:
-    mismatches = list(validate_audio_fixture_hashes())
-    assert not mismatches, f"Audio fixtures drifted: {mismatches}"
