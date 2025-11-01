@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import gradio as gr
 
-from app.generation import GenerationService
+from app.services import GenerationService, VoiceLibrary
 from app.ui import basic, longform, multi_speaker, voice_cloning
 from app.ui import voice_library as library_tab
-from app.voice_library import VoiceLibrary
 
 
 def build_demo(

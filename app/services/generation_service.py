@@ -1,4 +1,4 @@
-"""Generation orchestration service for the Higgs Audio Gradio application."""
+"""Generation orchestration service for the Higgs Audio application."""
 
 from __future__ import annotations
 
@@ -13,7 +13,9 @@ import numpy as np
 import torch
 import torchaudio
 
-from app import audio_io, config, startup, voice_library
+from app import audio_io, config, startup
+from app.services.cache import GenerationCache
+from app.services.voice_service import VoiceLibrary, transcribe_audio
 from audio_processing_utils import (enhance_multi_speaker_audio,
                                     normalize_audio_volume)
 from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
@@ -27,20 +29,20 @@ class GenerationService:
     def __init__(
         self,
         device: torch.device,
-        voice_library_service: voice_library.VoiceLibrary,
+        voice_library_service: VoiceLibrary,
     ) -> None:
         self._device = device
         self._voice_library = voice_library_service
         self._serve_engine: HiggsAudioServeEngine | None = None
-        self._audio_cache, self._token_cache = startup.initialize_caches()
+        audio_cache, token_cache = startup.initialize_caches()
+        self._cache = GenerationCache(audio=audio_cache, tokens=token_cache)
 
     # ------------------------------------------------------------------
     # Core utilities
     # ------------------------------------------------------------------
     def clear_caches(self) -> None:
         """Clear audio/token caches and free GPU memory."""
-        self._audio_cache.clear()
-        self._token_cache.clear()
+        self._cache.clear()
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         gc.collect()
@@ -123,9 +125,9 @@ class GenerationService:
                 ras_win_max_num_repeat=ras_win_max_num_repeat,
                 do_sample=do_sample,
             )
-            if cache_key in self._audio_cache:
+            if cache_key in self._cache.audio:
                 print("🚀 Using cached audio result")
-                return self._audio_cache[cache_key]
+                return self._cache.audio[cache_key]
 
         generate_kwargs = {
             "chat_ml_sample": ChatMLSample(messages=list(messages)),
@@ -141,10 +143,10 @@ class GenerationService:
         output: HiggsAudioResponse = self._serve_engine.generate(**generate_kwargs)  # type: ignore[arg-type]
 
         if use_cache and cache_key:
-            self._audio_cache[cache_key] = output
-            if len(self._audio_cache) > config.DEFAULT_CACHE_MAX_ENTRIES:
-                oldest_key = next(iter(self._audio_cache))
-                del self._audio_cache[oldest_key]
+            self._cache.audio[cache_key] = output
+            if len(self._cache.audio) > config.DEFAULT_CACHE_MAX_ENTRIES:
+                oldest_key = next(iter(self._cache.audio))
+                del self._cache.audio[oldest_key]
 
         return output
 
@@ -823,9 +825,7 @@ class GenerationService:
                         f"temp_speaker_{speaker_id}_{seed}_{int(time.time())}.txt"
                     )
                     try:
-                        transcribed_text = voice_library.transcribe_audio(
-                            speaker_audio_path
-                        )
+                        transcribed_text = transcribe_audio(speaker_audio_path)
                     except Exception:
                         transcribed_text = text_content
                     with open(text_path, "w", encoding="utf-8") as handle:
@@ -1105,7 +1105,7 @@ class GenerationService:
 
 def create_generation_service(
     device: torch.device,
-    voice_library_service: voice_library.VoiceLibrary,
+    voice_library_service: VoiceLibrary,
 ) -> GenerationService:
     """Factory for the default GenerationService."""
     return GenerationService(device=device, voice_library_service=voice_library_service)

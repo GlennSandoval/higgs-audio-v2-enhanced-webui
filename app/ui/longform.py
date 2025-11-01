@@ -8,8 +8,7 @@ from typing import Any
 import gradio as gr
 
 from app import config
-from app.generation import GenerationService
-from app.voice_library import VoiceLibrary
+from app.services import GenerationService, VoiceLibrary
 
 
 @dataclass

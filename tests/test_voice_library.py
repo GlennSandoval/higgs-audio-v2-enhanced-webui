@@ -2,7 +2,8 @@ import json
 
 import numpy as np
 
-from app import config, voice_library
+from app import config
+from app.services import voice_service
 
 
 def create_voice_library(tmp_path):
@@ -19,7 +20,7 @@ def create_voice_library(tmp_path):
     def fake_transcribe(path):
         return "fake transcript"
 
-    library = voice_library.VoiceLibrary(
+    library = voice_service.VoiceLibrary(
         transcribe_fn=fake_transcribe,
         save_temp_audio_fn=fake_save_audio,
         voice_directory=voice_dir.as_posix(),
@@ -84,6 +85,6 @@ def test_list_all_available_voices_includes_library_and_predefined(tmp_path):
 
 
 def test_robust_txt_path_creation_handles_uppercase_extension():
-    path = voice_library.robust_txt_path_creation("Sample.WAV")
+    path = voice_service.robust_txt_path_creation("Sample.WAV")
     expected = "Sample" + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
     assert path == expected

@@ -1,4 +1,4 @@
-"""Voice library management helpers for the Higgs Audio Gradio application."""
+"""Voice library service for managing voice assets and transcription."""
 
 from __future__ import annotations
 

@@ -9,7 +9,11 @@ from typing import TYPE_CHECKING
 import gradio as gr
 import torch
 
-from app import generation, startup, voice_library
+from app import startup
+from app.services import (GenerationService, VoiceLibrary,
+                          create_default_voice_library,
+                          create_generation_service)
+from app.services.voice_service import WHISPER_AVAILABLE
 from app.ui import build_demo
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
@@ -22,8 +26,8 @@ class AppContext:
 
     device: torch.device
     whisper_available: bool
-    voice_library_service: voice_library.VoiceLibrary
-    generation_service: generation.GenerationService
+    voice_library_service: VoiceLibrary
+    generation_service: GenerationService
     audio_dependency_report: dict[str, bool]
     demo: gr.Blocks
     bootstrap_config: "BootstrapConfig"
@@ -53,8 +57,8 @@ def create_app_context(
     startup.ensure_output_directories()
     dependency_report = startup.check_audio_dependencies()
 
-    voice_library_service = voice_library.create_default_voice_library()
-    generation_service = generation.create_generation_service(
+    voice_library_service = create_default_voice_library()
+    generation_service = create_generation_service(
         device=device,
         voice_library_service=voice_library_service,
     )
@@ -62,12 +66,12 @@ def create_app_context(
     demo = build_demo(
         generation_service=generation_service,
         voice_library_service=voice_library_service,
-        whisper_available=voice_library.WHISPER_AVAILABLE,
+        whisper_available=WHISPER_AVAILABLE,
     )
 
     return AppContext(
         device=device,
-        whisper_available=voice_library.WHISPER_AVAILABLE,
+        whisper_available=WHISPER_AVAILABLE,
         voice_library_service=voice_library_service,
         generation_service=generation_service,
         audio_dependency_report=dependency_report,

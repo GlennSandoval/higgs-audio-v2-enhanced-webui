@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import gradio as gr
 
 from app import config
-from app.generation import GenerationService
+from app.services import GenerationService
 
 
 @dataclass
