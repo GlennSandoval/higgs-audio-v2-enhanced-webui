@@ -37,12 +37,27 @@ def verify_imports():
     
     return True
 
+def verify_application_wiring():
+    """Ensure the central application wiring can be constructed."""
+    try:
+        from app import create_app
+
+        create_app()
+        print("✅ Application wiring constructed successfully")
+        return True
+    except Exception as exc:  # pylint: disable=broad-except
+        print(f"❌ Application wiring failed: {exc}")
+        return False
+
 def main():
     """Main verification function."""
     print("🎵 Higgs Audio Setup Verification")
     print("=" * 40)
     
-    if verify_imports():
+    imports_ok = verify_imports()
+    wiring_ok = verify_application_wiring() if imports_ok else False
+
+    if imports_ok and wiring_ok:
         print("\n🎉 All imports successful! Setup is working correctly.")
         print("\n📝 You can now run:")
         print("   uv run python higgs_audio_gradio.py")
