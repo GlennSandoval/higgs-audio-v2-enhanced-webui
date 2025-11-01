@@ -196,15 +196,28 @@ $env:TRANSFORMERS_CACHE=$env:HF_HUB_CACHE
 
 ```
 higgs-audio-v2-enhanced-webui/
-├── higgs_audio_gradio.py          # Entry point (CLI argument parsing, app launcher)
-├── app/                          # Modular application components
-│   ├── __init__.py               # Public exports (AppContext, create_app)
-│   ├── app.py                    # Central application wiring
-│   ├── config.py                 # Configuration and constants
+├── higgs_audio_gradio.py          # Entry point (CLI argument parsing only)
+├── gradio_app/                   # Gradio application layer
+│   ├── __init__.py               # Public exports
+│   ├── main.py                   # Application factory (build_controller, create_app)
+│   ├── config.py                 # Bootstrap configuration (HF tokens, cache paths)
+│   └── controllers.py            # AppController orchestration
+├── app/                          # Core application services
+│   ├── __init__.py               # Public exports (AppContext, create_app_context)
+│   ├── app.py                    # Application context wiring
+│   ├── config.py                 # Configuration constants (model IDs, paths, defaults)
 │   ├── startup.py                # Environment setup and dependency checks
 │   ├── audio_io.py               # Audio file I/O and format conversion
-│   ├── voice_library.py          # Voice library management and transcription
-│   ├── generation.py             # Audio generation orchestration and caching
+│   ├── services/                 # Business logic services
+│   │   ├── __init__.py           # Service exports
+│   │   ├── generation_service.py # Audio generation orchestration (GenerationService)
+│   │   ├── voice_service.py      # Voice library management (VoiceLibrary)
+│   │   └── cache.py              # Generation cache management
+│   ├── audio/                    # Audio processing utilities
+│   │   ├── __init__.py           # Processing exports
+│   │   ├── capabilities.py       # Dependency detection (FFmpeg, pydub, scipy)
+│   │   ├── processing.py         # Volume normalization and enhancement
+│   │   └── types.py              # Audio type definitions (AudioBuffer)
 │   └── ui/                       # Gradio UI tab builders
 │       ├── __init__.py           # Demo builder (build_demo)
 │       ├── basic.py              # Basic generation tab
@@ -212,7 +225,6 @@ higgs-audio-v2-enhanced-webui/
 │       ├── longform.py           # Long-form generation tab
 │       ├── multi_speaker.py      # Multi-speaker generation tab
 │       └── voice_library.py      # Voice library management tab
-├── audio_processing_utils.py      # Volume normalization and enhancement
 ├── boson_multimodal/             # Core Higgs Audio model components
 │   ├── model/                    # Model architecture
 │   ├── serve/                    # Serving engine (HiggsAudioServeEngine)
@@ -229,32 +241,41 @@ higgs-audio-v2-enhanced-webui/
 
 The codebase follows a **modular, layered architecture** designed for maintainability and testability:
 
-**Layer 1: Configuration & Startup** (`app/config.py`, `app/startup.py`)
+**Layer 1: Entry Point & Bootstrap** (`higgs_audio_gradio.py`, `gradio_app/`)
+- **Entry Point**: Minimal CLI argument parsing, delegates to Gradio app layer
+- **Bootstrap Config**: Environment-based configuration (HF tokens, cache directories)
+- **Application Factory**: `build_controller()` creates the complete app controller
+- **Controller**: Orchestrates service initialization and demo construction
+
+**Layer 2: Configuration & Startup** (`app/config.py`, `app/startup.py`)
 - Central configuration management (model IDs, paths, defaults)
-- Environment setup (device selection, cache initialization)
+- Environment setup (device selection, HF transfer acceleration)
 - Dependency checking (FFmpeg, pydub, scipy)
+- Output directory initialization
 
-**Layer 2: Core Services** (`app/audio_io.py`, `app/voice_library.py`, `app/generation.py`)
-- **Audio I/O**: Format conversion, loading, saving with 24kHz mono enforcement
-- **Voice Library**: CRUD operations, Whisper transcription, config persistence
-- **Generation**: Model initialization, caching, multi-speaker orchestration
+**Layer 3: Core Services** (`app/services/`)
+- **GenerationService**: Model initialization, caching, multi-speaker orchestration
+- **VoiceLibrary**: CRUD operations, Whisper transcription, config persistence
+- **GenerationCache**: Intelligent caching of audio and token outputs
 
-**Layer 3: UI Components** (`app/ui/*.py`)
+**Layer 4: Audio Processing** (`app/audio/`)
+- **Capabilities**: Dependency detection and feature flagging
+- **Processing**: Volume normalization, multi-speaker enhancement
+- **Types**: Type-safe audio buffer abstractions
+- **Audio I/O** (`app/audio_io.py`): Format conversion, loading, saving with 24kHz mono enforcement
+
+**Layer 5: UI Components** (`app/ui/`)
 - Each Gradio tab in its own module with component builders and callbacks
 - Clean separation between UI logic and business logic
 - Dependency injection for services (generation, voice library)
 
-**Layer 4: Application Wiring** (`app/app.py`)
-- `create_app()` orchestrates service initialization and UI construction
-- Returns `AppContext` with device, services, and demo instance
-- Entry point (`higgs_audio_gradio.py`) simply parses args and launches
-
 **Key Design Principles:**
-- **Acyclic dependencies**: Config → Startup → Services → UI
+- **Clear separation of concerns**: Entry → Bootstrap → Services → Audio → UI
 - **Dependency injection**: Services passed to UI builders, not imported directly
 - **Single responsibility**: Each module has a focused purpose
 - **Testability**: Core logic separated from Gradio callbacks
 - **Immutability**: `AppContext` is frozen to prevent runtime modification
+- **Factory pattern**: `create_app_context()` and `build_controller()` for initialization
 
 ## 🚀 Performance Tips
 

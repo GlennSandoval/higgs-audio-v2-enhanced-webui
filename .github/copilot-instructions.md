@@ -23,7 +23,7 @@
 - Scene descriptions are optional but must stay inside `<|scene_desc_start|>` / `<|scene_desc_end|>` so the tokenizer admits them.
 
 ## Audio Post-Processing
-- Enable volume controls via `enhance_multi_speaker_audio` and `normalize_audio_volume` in `audio_processing_utils.py`; they expect float32 arrays and will downmix intelligently.
+- Enable volume controls via `enhance_multi_speaker_audio` and `normalize_audio_volume` in `app.audio.processing`; they expect float32 arrays and will downmix intelligently.
 - Multi-speaker gap timing relies on `speaker_pause_duration` in `generate_multi_speaker`; adjust that instead of manual silence insertion.
 - Call `clear_caches()` after long-form or batch runs to release `_audio_cache`, `_token_cache`, and CUDA memory.
 
