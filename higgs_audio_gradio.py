@@ -1,70 +1,22 @@
 import argparse
-import gc
 import os
 import re
 import sys
-import tempfile
-import time
-from datetime import datetime
 
 import gradio as gr
-import numpy as np
-import torch
 import torchaudio
 
-from app import audio_io, config, startup, voice_library as voice_lib
-from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
-from boson_multimodal.serve.serve_engine import (HiggsAudioResponse,
-                                                 HiggsAudioServeEngine)
+from app import config, generation, startup, voice_library as voice_lib
 
 startup.configure_environment()
 
-# Import our custom audio processing utilities
-from audio_processing_utils import (enhance_multi_speaker_audio,
-                                    normalize_audio_volume)
-
-# Initialize model
-
 device = startup.select_device()
-
-# Global instances
-serve_engine = None
-
-# Cache management for optimizations
-_audio_cache, _token_cache = startup.initialize_caches()
 
 startup.ensure_output_directories()
 
 voice_library_service = voice_lib.create_default_voice_library()
+generation_service = generation.create_generation_service(device, voice_library_service)
 WHISPER_AVAILABLE = voice_lib.WHISPER_AVAILABLE
-
-def clear_caches():
-    """Clear audio and token caches to free memory"""
-    global _audio_cache, _token_cache
-    _audio_cache.clear()
-    _token_cache.clear()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-    gc.collect()
-    print("🧹 Cleared caches and freed memory")
-
-def get_cache_key(
-    text,
-    voice_ref=None,
-    temperature=config.DEFAULT_TEMPERATURE,
-    top_k=config.DEFAULT_TOP_K,
-    top_p=config.DEFAULT_TOP_P,
-    min_p=None,
-    repetition_penalty=config.DEFAULT_REPETITION_PENALTY,
-    ras_win_len=config.DEFAULT_RAS_WIN_LEN,
-    ras_win_max_num_repeat=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
-    do_sample=config.DEFAULT_DO_SAMPLE,
-):
-    """Generate cache key for audio generation"""
-    import hashlib
-    key_str = f"{text}_{voice_ref}_{temperature}_{top_k}_{top_p}_{min_p}_{repetition_penalty}_{ras_win_len}_{ras_win_max_num_repeat}_{do_sample}"
-    return hashlib.sha256(key_str.encode()).hexdigest()
-
 
 # Voice library management
 def get_voice_library_voices():
@@ -111,63 +63,16 @@ def get_voice_path(voice_selection):
     """Resolve a voice selection to a filesystem path."""
     return voice_library_service.get_voice_path(voice_selection)
 
-def apply_voice_config_to_generation(voice_selection, transcript, scene_description="", force_audio_gen=False):
-    """Apply a voice's saved configuration to generate audio"""
-    if not voice_selection or voice_selection == config.SMART_VOICE_LABEL:
-        return None
-    
-    # Extract voice name from selection
-    voice_name = None
-    if voice_selection.startswith(config.LIBRARY_VOICE_PREFIX):
-        voice_name = voice_selection[len(config.LIBRARY_VOICE_PREFIX):]
-    
-    if not voice_name:
-        return None
-    
-    # Load voice configuration
-    voice_config = load_voice_config(voice_name)
-    voice_path = get_voice_path(f"{config.LIBRARY_VOICE_PREFIX}{voice_name}")
-
-    if not voice_path or not os.path.exists(voice_path):
-        return None
-    
-    try:
-        # Create messages using voice reference
-        system_content = config.DEFAULT_SYSTEM_MESSAGE
-        if scene_description and scene_description.strip():
-            system_content += (
-                f" {config.SCENE_DESC_START_TAG}\n"
-                f"{scene_description}\n"
-                f"{config.SCENE_DESC_END_TAG}"
-            )
-        
-        messages = [
-            Message(role="system", content=system_content),
-            Message(role="user", content="Please speak this text."),
-            Message(role="assistant", content=AudioContent(audio_url=voice_path)),
-            Message(role="user", content=transcript)
-        ]
-        
-        # Generate with voice's saved parameters
-        min_p_value = voice_config['min_p'] if voice_config['min_p'] > 0 else None
-        output = optimized_generate_audio(
-            messages,
-            voice_config['max_new_tokens'],
-            voice_config['temperature'],
-            voice_config['top_k'],
-            voice_config['top_p'],
-            min_p_value,
-            voice_config['repetition_penalty'],
-            voice_config['ras_win_len'],
-            voice_config['ras_win_max_num_repeat'],
-            voice_config['do_sample'],
-        )
-        
-        return output
-        
-    except Exception as e:
-        print(f"Error applying voice config: {e}")
-        return None
+def apply_voice_config_to_generation(
+    voice_selection, transcript, scene_description="", force_audio_gen=False
+):
+    """Delegate voice-configured generation to the generation service."""
+    return generation_service.apply_voice_config_to_generation(
+        voice_selection,
+        transcript,
+        scene_description=scene_description,
+        force_audio_gen=force_audio_gen,
+    )
 
 # Available voice prompts - this needs to be refreshed dynamically
 def get_current_available_voices():
@@ -176,49 +81,8 @@ def get_current_available_voices():
 
 available_voices = get_current_available_voices()
 
-def initialize_model():
-    global serve_engine
-    if serve_engine is None:
-        print("🚀 Initializing Higgs Audio model...")
-        serve_engine = HiggsAudioServeEngine(
-            config.MODEL_ID,
-            config.AUDIO_TOKENIZER_ID,
-            device=device,
-        )
-        print("✅ Model initialized successfully")
-
-def transcribe_audio(audio_path):
-    """Transcribe audio file to text using the voice library module."""
-    return voice_lib.transcribe_audio(audio_path)
 
 
-def create_voice_reference_txt(audio_path, transcript_sample=None):
-    """Create a corresponding transcript for an audio file."""
-    return voice_library_service.create_voice_reference_txt(audio_path, transcript_sample)
-
-
-def robust_txt_path_creation(audio_path):
-    """
-    Given an audio file path, returns the corresponding .txt path,
-    handling all common audio extensions case-insensitively.
-    """
-    return voice_library_service.robust_txt_path_creation(audio_path)
-
-
-def parse_multi_speaker_text(text):
-    """Parse multi-speaker text and extract speaker assignments"""
-    # Look for [SPEAKER0], [SPEAKER1], etc.
-    speaker_pattern = r'\[SPEAKER(\d+)\]\s*([^[]*?)(?=\[SPEAKER\d+\]|$)'
-    matches = re.findall(speaker_pattern, text, re.DOTALL)
-    
-    speakers = {}
-    for speaker_id, content in matches:
-        speaker_key = f"SPEAKER{speaker_id}"
-        if speaker_key not in speakers:
-            speakers[speaker_key] = []
-        speakers[speaker_key].append(content.strip())
-    
-    return speakers
 
 def detect_dynamic_speakers(text):
     """Detect any speaker names in brackets and return list of unique speakers"""
@@ -244,218 +108,7 @@ def detect_dynamic_speakers(text):
     
     return speakers
 
-def parse_dynamic_speaker_text(text, speaker_mapping=None):
-    """Parse text with any bracket format and convert to internal format"""
-    if not text or not text.strip():
-        return {}
-    
-    # Pattern to match any text in brackets
-    speaker_pattern = r'^\s*\[([^\]]+)\]\s*[:.]?\s*(.+?)(?=^\s*\[[^\]]+\]|$)'
-    matches = re.findall(speaker_pattern, text, re.MULTILINE | re.DOTALL)
-    
-    speakers = {}
-    
-    for speaker_name, content in matches:
-        speaker_name = speaker_name.strip()
-        content = content.strip()
-        
-        if not content:
-            continue
-            
-        # Use mapping if provided, otherwise use speaker name directly
-        speaker_key = speaker_mapping.get(speaker_name, speaker_name) if speaker_mapping else speaker_name
-        
-        if speaker_key not in speakers:
-            speakers[speaker_key] = []
-        speakers[speaker_key].append(content)
-    
-    return speakers
-
-def convert_to_speaker_format(text, speaker_mapping):
-    """Convert dynamic speaker text to SPEAKER0, SPEAKER1 format"""
-    if not text or not speaker_mapping:
-        return text
-    
-    converted_text = text
-    
-    # Replace each speaker name with the mapped SPEAKER format
-    for speaker_name, speaker_id in speaker_mapping.items():
-        # Match [Speaker Name]: or [Speaker Name] 
-        pattern = rf'\[{re.escape(speaker_name)}\]\s*[:.]?\s*'
-        replacement = f'[{speaker_id}] '
-        converted_text = re.sub(pattern, replacement, converted_text, flags=re.MULTILINE)
-    
-    return converted_text
-
-def auto_format_multi_speaker(text):
-    """Auto-format text for multi-speaker if not already formatted"""
-    # If already has speaker tags, return as-is
-    if '[SPEAKER' in text:
-        return text
-    
-    # Split by common dialogue indicators
-    lines = text.split('\n')
-    formatted_lines = []
-    current_speaker = 0
-    
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-            
-        # Check for dialogue indicators
-        if line.startswith('"') or line.startswith("'") or ':' in line:
-            # Switch speakers for dialogue
-            if len(formatted_lines) > 0:
-                current_speaker = 1 - current_speaker
-            formatted_lines.append(f"[SPEAKER{current_speaker}] {line}")
-        else:
-            # Regular text, assign to current speaker
-            formatted_lines.append(f"[SPEAKER{current_speaker}] {line}")
-    
-    return '\n'.join(formatted_lines)
-
-def smart_chunk_text(text, max_chunk_size=200):
-    """Smart text chunking that respects sentence boundaries and paragraphs"""
-    # First split by paragraphs
-    paragraphs = text.split('\n\n')
-    chunks = []
-    
-    for paragraph in paragraphs:
-        paragraph = paragraph.strip()
-        if not paragraph:
-            continue
-            
-        # If paragraph is short enough, keep it as one chunk
-        if len(paragraph) <= max_chunk_size:
-            chunks.append(paragraph)
-            continue
-        
-        # Split long paragraphs by sentences
-        sentences = []
-        # Split by multiple sentence endings
-        sentence_parts = re.split(r'([.!?]+)', paragraph)
-        
-        current_sentence = ""
-        for i in range(0, len(sentence_parts), 2):
-            if i < len(sentence_parts):
-                current_sentence = sentence_parts[i].strip()
-                if i + 1 < len(sentence_parts):
-                    current_sentence += sentence_parts[i + 1]
-                if current_sentence.strip():
-                    sentences.append(current_sentence.strip())
-        
-        # Group sentences into chunks
-        current_chunk = ""
-        for sentence in sentences:
-            # If adding this sentence would exceed limit, save current chunk
-            if current_chunk and len(current_chunk) + len(sentence) + 1 > max_chunk_size:
-                chunks.append(current_chunk.strip())
-                current_chunk = sentence
-            else:
-                if current_chunk:
-                    current_chunk += " " + sentence
-                else:
-                    current_chunk = sentence
-        
-        # Add remaining chunk
-        if current_chunk:
-            chunks.append(current_chunk.strip())
-    
-    return chunks
-
-def optimized_generate_audio(messages, max_new_tokens, temperature, top_k=50, top_p=0.95, min_p=None, 
-                           repetition_penalty=1.0, ras_win_len=7, ras_win_max_num_repeat=2, do_sample=True, use_cache=True):
-    """Optimized audio generation with caching and incremental decoding"""
-    cache_key = None
-    if use_cache:
-        # Include all parameters in cache key for proper caching
-        cache_key = get_cache_key(str(messages), temperature=temperature, top_k=top_k, top_p=top_p, 
-                                min_p=min_p, repetition_penalty=repetition_penalty, ras_win_len=ras_win_len, 
-                                ras_win_max_num_repeat=ras_win_max_num_repeat, do_sample=do_sample)
-        if cache_key in _audio_cache:
-            print("🚀 Using cached audio result")
-            return _audio_cache[cache_key]
-    
-    # Generate audio with optimizations
-    # Note: Only include parameters that the serve engine actually supports
-    generate_kwargs = {
-        "chat_ml_sample": ChatMLSample(messages=messages),
-        "max_new_tokens": max_new_tokens,
-        "temperature": temperature,
-        "top_p": top_p,
-        "top_k": top_k,
-    "stop_strings": list(config.STOP_STRINGS),
-        "ras_win_len": ras_win_len,
-        "ras_win_max_num_repeat": ras_win_max_num_repeat,
-    }
-    
-    # TODO: Future parameters to implement in serve engine:
-    # - min_p: Alternative to top_p sampling
-    # - repetition_penalty: Penalty for repeating tokens  
-    # - do_sample: Enable/disable sampling vs greedy decoding
-    
-    output: HiggsAudioResponse = serve_engine.generate(**generate_kwargs)
-    
-    # Cache result if enabled
-    if use_cache and cache_key:
-        _audio_cache[cache_key] = output
-        # Keep cache size manageable
-        if len(_audio_cache) > config.DEFAULT_CACHE_MAX_ENTRIES:
-            # Remove oldest entries
-            oldest_key = next(iter(_audio_cache))
-            del _audio_cache[oldest_key]
-    
-    return output
-
 # VOICE LIBRARY FUNCTIONS
-
-def test_voice_sample(audio_data, sample_rate, test_text=config.DEFAULT_TEST_VOICE_PROMPT):
-    """Test a voice sample with default text before saving to library"""
-    if audio_data is None:
-        return None, "❌ Please upload an audio sample first"
-    
-    try:
-        # Initialize model
-        initialize_model()
-        
-        # Save temporary audio using robust method
-        temp_audio_path = audio_io.save_temp_audio_robust(audio_data, sample_rate)
-        temp_txt_path = create_voice_reference_txt(temp_audio_path)
-        
-        # Generate test audio using voice cloning
-        system_content = config.DEFAULT_SYSTEM_MESSAGE
-        messages = [
-            Message(role="system", content=system_content),
-            Message(role="user", content="Please speak this text."),
-            Message(role="assistant", content=AudioContent(audio_url=temp_audio_path)),
-            Message(role="user", content=test_text)
-        ]
-        
-        # Generate audio
-        output = optimized_generate_audio(
-            messages,
-            config.DEFAULT_MAX_NEW_TOKENS,
-            config.DEFAULT_TEMPERATURE,
-            use_cache=False,
-        )
-        
-        # Save test output
-        test_output_path = config.VOICE_LIBRARY_TEST_OUTPUT_FILENAME
-        torchaudio.save(test_output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-        
-        # Clean up temp files
-        for path in [temp_audio_path, temp_txt_path]:
-            if path and os.path.exists(path):
-                try:
-                    os.unlink(path)
-                except:
-                    pass
-        
-        return test_output_path, "✅ Voice test completed! Listen to the result above."
-        
-    except Exception as e:
-        return None, f"❌ Error testing voice: {str(e)}"
 
 def generate_basic(
     transcript,
@@ -474,118 +127,23 @@ def generate_basic(
     enable_normalization=False,
     target_volume=config.DEFAULT_TARGET_VOLUME
 ):
-    # Initialize model if not already done
-    initialize_model()
-    
-    # Set seed for reproducibility
-    if seed > 0:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-    
-    # Prepare system message
-    system_content = config.DEFAULT_SYSTEM_MESSAGE
-    if scene_description and scene_description.strip():
-        system_content += (
-            f" {config.SCENE_DESC_START_TAG}\n"
-            f"{scene_description}\n"
-            f"{config.SCENE_DESC_END_TAG}"
-        )
-    
-    # Handle voice selection using the same method as voice cloning tab
-    if voice_prompt and voice_prompt != config.SMART_VOICE_LABEL:
-        ref_audio_path = get_voice_path(voice_prompt)
-        if ref_audio_path and os.path.exists(ref_audio_path):
-            # Create corresponding txt file path using robust method
-            txt_path = robust_txt_path_creation(ref_audio_path)
-            
-            if not os.path.exists(txt_path):
-                # Auto-transcribe the audio file instead of creating dummy text
-                try:
-                    transcription = transcribe_audio(ref_audio_path)
-                    with open(txt_path, 'w', encoding='utf-8') as f:
-                        f.write(transcription)
-                    print(f"📝 Auto-transcribed and created: {txt_path}")
-                except Exception as e:
-                    print(f"⚠️ Failed to transcribe {ref_audio_path}: {e}")
-                    # Fallback to dummy text only if transcription fails
-                    with open(txt_path, 'w', encoding='utf-8') as f:
-                        f.write(config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT)
-                    print(f"📝 Created fallback text file: {txt_path}")
-            
-            # Use the same pattern as working voice cloning
-            messages = [
-                Message(role="system", content=system_content),
-                Message(role="user", content="Please speak this text."),
-                Message(role="assistant", content=AudioContent(audio_url=ref_audio_path)),
-                Message(role="user", content=transcript)
-            ]
-        else:
-            # Fallback to smart voice if file doesn't exist
-            messages = [
-                Message(role="system", content=system_content),
-                Message(role="user", content=transcript)
-            ]
-    else:
-        # Smart voice
-        messages = [
-            Message(role="system", content=system_content),
-            Message(role="user", content=transcript)
-        ]
-    
-    # Generate audio with optimizations
-    min_p_value = min_p if min_p > 0 else None  # Convert 0 to None for disabled
-    output = optimized_generate_audio(
-        messages, max_new_tokens, temperature, top_k, top_p, min_p_value, 
-        repetition_penalty, ras_win_len, ras_win_max_num_repeat, do_sample
+    return generation_service.generate_basic(
+        transcript,
+        voice_prompt,
+        temperature,
+        max_new_tokens,
+        seed,
+        scene_description,
+        top_k,
+        top_p,
+        min_p,
+        repetition_penalty,
+        ras_win_len,
+        ras_win_max_num_repeat,
+        do_sample,
+        enable_normalization,
+        target_volume,
     )
-    
-    # Save and return audio with organized output
-    output_path = audio_io.get_output_path(config.OUTPUT_BASIC_SUBDIR, "basic_audio")
-    torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-    
-    # Apply volume normalization if enabled
-    if enable_normalization:
-        print(f"🔊 Applying volume normalization to basic generation...")
-        
-        # Load the generated audio
-        audio_data, sample_rate = torchaudio.load(output_path)
-        
-        # Apply simple normalization
-        normalized_audio = normalize_audio_volume(
-            audio_data.squeeze(),
-            target_rms=target_volume,
-            sample_rate=sample_rate
-        )
-        
-        # Create normalized output filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        normalized_filename = f"{timestamp}_normalized_basic_audio.wav"
-        normalized_path = os.path.join(
-            config.OUTPUT_BASE_DIR,
-            config.OUTPUT_BASIC_SUBDIR,
-            normalized_filename,
-        )
-        
-        # Ensure output directory exists
-        os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
-        
-        # Save normalized audio
-        if isinstance(normalized_audio, torch.Tensor):
-            if len(normalized_audio.shape) == 1:
-                normalized_audio = normalized_audio.unsqueeze(0)
-            torchaudio.save(normalized_path, normalized_audio, sample_rate)
-        else:
-            normalized_tensor = torch.tensor(normalized_audio, dtype=torch.float32)
-            if len(normalized_tensor.shape) == 1:
-                normalized_tensor = normalized_tensor.unsqueeze(0)
-            torchaudio.save(normalized_path, normalized_tensor, sample_rate)
-        
-        print(f"🎵 Saved normalized audio to: {normalized_path}")
-        clear_caches()  # Clear cache after generation
-        return normalized_path
-    
-    clear_caches()  # Clear cache after generation
-    return output_path
 
 def generate_voice_clone(
     transcript,
@@ -601,61 +159,20 @@ def generate_voice_clone(
     ras_win_max_num_repeat=config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
     do_sample=config.DEFAULT_DO_SAMPLE
 ):
-    # Initialize model if not already done
-    initialize_model()
-    
-    # Validate inputs
-    if not transcript.strip():
-        raise ValueError("Please enter text to synthesize")
-    
-    if uploaded_voice is None or uploaded_voice[1] is None:
-        raise ValueError("Please upload a voice sample for cloning")
-    
-    # Set seed for reproducibility
-    if seed > 0:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-    
-    # Initialize temp paths to None to avoid NameError
-    temp_audio_path = None
-    temp_txt_path = None
-    
-    try:
-        # Save uploaded audio to temporary file using enhanced method
-        temp_audio_path = audio_io.enhanced_save_temp_audio_fixed(uploaded_voice)
-        
-        # Create corresponding txt file with auto-transcription
-        temp_txt_path = create_voice_reference_txt(temp_audio_path)  # Auto-transcribes!
-        
-        # Use the same pattern as the official generation.py
-        # The serve engine expects the voice reference format like this:
-        system_content = config.DEFAULT_SYSTEM_MESSAGE
-        
-        # Create messages similar to how the official code does it
-        # First, add the voice reference as a user-assistant pair
-        messages = [
-            Message(role="system", content=system_content),
-            Message(role="user", content="Please speak this text."),  # Dummy prompt for voice ref
-            Message(role="assistant", content=AudioContent(audio_url=temp_audio_path)),
-            Message(role="user", content=transcript)
-        ]
-        
-        # Generate audio with optimizations
-        min_p_value = min_p if min_p > 0 else None  # Convert 0 to None for disabled
-        output = optimized_generate_audio(
-            messages, max_new_tokens, temperature, top_k, top_p, min_p_value, 
-            repetition_penalty, ras_win_len, ras_win_max_num_repeat, do_sample, use_cache=False
-        )
-        
-        # Save and return audio with organized output
-        output_path = audio_io.get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice")
-        torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-        clear_caches()  # Clear cache after generation
-        return output_path
-    
-    finally:
-        # Clean up temporary files using robust cleanup
-        audio_io.robust_file_cleanup([temp_audio_path, temp_txt_path])
+    return generation_service.generate_voice_clone(
+        transcript,
+        uploaded_voice,
+        temperature,
+        max_new_tokens,
+        seed,
+        top_k,
+        top_p,
+        min_p,
+        repetition_penalty,
+        ras_win_len,
+        ras_win_max_num_repeat,
+        do_sample,
+    )
 
 def generate_voice_clone_alternative(
     transcript,
@@ -672,55 +189,20 @@ def generate_voice_clone_alternative(
     do_sample=config.DEFAULT_DO_SAMPLE
 ):
     """Alternative voice cloning method using voice_ref format"""
-    # Initialize model if not already done
-    initialize_model()
-    
-    # Validate inputs
-    if not transcript.strip():
-        raise ValueError("Please enter text to synthesize")
-    
-    if uploaded_voice is None or uploaded_voice[1] is None:
-        raise ValueError("Please upload a voice sample for cloning")
-    
-    # Set seed for reproducibility
-    if seed > 0:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-    
-    # Initialize temp path to None to avoid NameError
-    temp_audio_path = None
-    
-    try:
-        # Save uploaded audio to temporary file using enhanced method
-        temp_audio_path = audio_io.enhanced_save_temp_audio_fixed(uploaded_voice)
-        
-        # Try the voice_ref format (this might be specific to newer versions)
-        system_content = config.DEFAULT_SYSTEM_MESSAGE
-        
-        # The format you were using - let's make sure the path is correct
-        user_content = f"<|voice_ref_start|>\n{temp_audio_path}\n<|voice_ref_end|>\n\n{transcript}"
-        
-        messages = [
-            Message(role="system", content=system_content),
-            Message(role="user", content=user_content)
-        ]
-        
-        # Generate audio with optimizations
-        min_p_value = min_p if min_p > 0 else None  # Convert 0 to None for disabled
-        output = optimized_generate_audio(
-            messages, max_new_tokens, temperature, top_k, top_p, min_p_value, 
-            repetition_penalty, ras_win_len, ras_win_max_num_repeat, do_sample, use_cache=False
-        )
-        
-        # Save and return audio with organized output
-        output_path = audio_io.get_output_path(config.OUTPUT_VOICE_CLONING_SUBDIR, "cloned_voice_alt")
-        torchaudio.save(output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-        clear_caches()  # Clear cache after generation
-        return output_path
-    
-    finally:
-        # Clean up temporary file using robust cleanup
-        audio_io.robust_file_cleanup(temp_audio_path)
+    return generation_service.generate_voice_clone_alternative(
+        transcript,
+        uploaded_voice,
+        temperature,
+        max_new_tokens,
+        seed,
+        top_k,
+        top_p,
+        min_p,
+        repetition_penalty,
+        ras_win_len,
+        ras_win_max_num_repeat,
+        do_sample,
+    )
 
 def generate_longform(
     transcript,
@@ -733,183 +215,19 @@ def generate_longform(
     scene_description,
     chunk_size
 ):
-    # Initialize model if not already done
-    initialize_model()
-    
-    # Set seed for reproducibility
-    if seed > 0:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-    
-    # Smart chunking
-    chunks = smart_chunk_text(transcript, max_chunk_size=chunk_size)
-    
-    # Handle voice reference setup
-    temp_audio_path = None
-    temp_txt_path = None
-    voice_ref_path = None
-    voice_ref_text = None
-    first_chunk_audio_path = None
-    first_chunk_text = None
-    
-    try:
-        # Determine initial voice reference
-        if voice_choice == "Upload Voice" and uploaded_voice is not None and uploaded_voice[1] is not None:
-            temp_audio_path = audio_io.enhanced_save_temp_audio_fixed(uploaded_voice)
-            temp_txt_path = create_voice_reference_txt(temp_audio_path)  # Auto-transcribes!
-            voice_ref_path = temp_audio_path
-            # Read transcription
-            if temp_txt_path and os.path.exists(temp_txt_path):
-                with open(temp_txt_path, 'r', encoding='utf-8') as f:
-                    voice_ref_text = f.read().strip()
-            else:
-                voice_ref_text = config.WHISPER_FALLBACK_TRANSCRIPTION
-        elif voice_choice == "Predefined Voice" and voice_prompt != config.SMART_VOICE_LABEL:
-            ref_audio_path = get_voice_path(voice_prompt)
-            if ref_audio_path and os.path.exists(ref_audio_path):
-                voice_ref_path = ref_audio_path
-                # Ensure txt file exists for predefined voices - use robust path creation
-                txt_path = robust_txt_path_creation(ref_audio_path)
-                
-                if not os.path.exists(txt_path):
-                    # Auto-transcribe instead of dummy text
-                    try:
-                        transcription = transcribe_audio(ref_audio_path)
-                        with open(txt_path, 'w', encoding='utf-8') as f:
-                            f.write(transcription)
-                    except Exception as e:
-                        print(f"⚠️ Failed to transcribe {ref_audio_path}: {e}")
-                        with open(txt_path, 'w', encoding='utf-8') as f:
-                            f.write(config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT)
-                
-                # Read transcription
-                if os.path.exists(txt_path):
-                    with open(txt_path, 'r', encoding='utf-8') as f:
-                        voice_ref_text = f.read().strip()
-                else:
-                    voice_ref_text = config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT
-        
-        # Prepare system message
-        system_content = config.DEFAULT_SYSTEM_MESSAGE
-        if scene_description and scene_description.strip():
-            system_content += (
-                f" {config.SCENE_DESC_START_TAG}\n"
-                f"{scene_description}\n"
-                f"{config.SCENE_DESC_END_TAG}"
-            )
-        
-        # Generate audio for each chunk
-        full_audio = []
-        sampling_rate = config.DEFAULT_SAMPLE_RATE
-        
-        for i, chunk in enumerate(chunks):
-            print(f"Processing chunk {i+1}/{len(chunks)}: {chunk[:50]}...")
-            
-            if voice_choice == "Upload Voice" and voice_ref_path and voice_ref_text:
-                messages = [
-                    Message(role="system", content=system_content),
-                    Message(role="user", content=voice_ref_text),
-                    Message(role="assistant", content=AudioContent(audio_url=voice_ref_path)),
-                    Message(role="user", content=chunk)
-                ]
-            elif voice_choice == "Predefined Voice" and voice_ref_path and voice_ref_text:
-                messages = [
-                    Message(role="system", content=system_content),
-                    Message(role="user", content=voice_ref_text),
-                    Message(role="assistant", content=AudioContent(audio_url=voice_ref_path)),
-                    Message(role="user", content=chunk)
-                ]
-            elif voice_choice == "Smart Voice":
-                if i == 0:
-                    # First chunk: let model pick a voice
-                    messages = [
-                        Message(role="system", content=system_content),
-                        Message(role="user", content=chunk)
-                    ]
-                else:
-                    # Use first chunk's audio and text as reference for all subsequent chunks
-                    if first_chunk_audio_path and first_chunk_text:
-                        messages = [
-                            Message(role="system", content=system_content),
-                            Message(role="user", content=first_chunk_text),
-                            Message(role="assistant", content=AudioContent(audio_url=first_chunk_audio_path)),
-                            Message(role="user", content=chunk)
-                        ]
-                    else:
-                        # Fallback if voice_ref_path or voice_ref_text is not available (shouldn't happen with Smart Voice)
-                        messages = [
-                            Message(role="system", content=system_content),
-                            Message(role="user", content=chunk)
-                        ]
-            else:
-                # Fallback for other voice choices
-                messages = [
-                    Message(role="system", content=system_content),
-                    Message(role="user", content=chunk)
-                ]
-            
-            # Generate audio with optimizations
-            output = optimized_generate_audio(messages, max_new_tokens, temperature, use_cache=True)
-            
-            if voice_choice == "Smart Voice" and i == 0:
-                # Save first chunk's audio and text for reference
-                first_chunk_audio_path = f"first_chunk_audio_{seed}_{hash(transcript[:20])}.wav"
-                torchaudio.save(first_chunk_audio_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-                first_chunk_text = chunk
-            
-            # Append audio
-            full_audio.append(output.audio)
-            sampling_rate = output.sampling_rate
-        
-        # Concatenate all audio chunks and save with organized output
-        if full_audio:
-            full_audio = np.concatenate(full_audio, axis=0)
-            
-            output_path = audio_io.get_output_path(config.OUTPUT_LONGFORM_SUBDIR, "longform_audio")
-            torchaudio.save(output_path, torch.from_numpy(full_audio)[None, :], sampling_rate)
-            clear_caches()  # Clear cache after generation
-            return output_path
-        else:
-            clear_caches()
-            return None
-    
-    finally:
-        # Clean up temporary files using robust cleanup
-        audio_io.robust_file_cleanup([temp_audio_path, temp_txt_path, first_chunk_audio_path])
-
-# IMPROVED HANDLER FUNCTION FOR MULTI-SPEAKER
-def handle_multi_speaker_generation(
-    transcript, voice_method, speaker0_audio, speaker1_audio, speaker2_audio,
-    speaker0_voice, speaker1_voice, speaker2_voice, temperature, max_new_tokens, 
-    seed, scene_description, auto_format
-):
-    # Prepare uploaded voices list with better validation
-    uploaded_voices = []
-    if voice_method == "Upload Voices":
-        for i, audio in enumerate([speaker0_audio, speaker1_audio, speaker2_audio]):
-            if audio is not None and len(audio) == 2 and audio[1] is not None:
-                # Validate audio data
-                sample_rate, audio_data = audio
-                if isinstance(audio_data, np.ndarray) and len(audio_data) > 0:
-                    uploaded_voices.append(audio)
-                    print(f"✅ Added SPEAKER{i} audio: {len(audio_data)} samples at {sample_rate}Hz")
-                else:
-                    uploaded_voices.append(None)
-                    print(f"⚠️ Invalid audio data for SPEAKER{i}")
-            else:
-                uploaded_voices.append(None)
-                print(f"⚠️ No audio provided for SPEAKER{i}")
-    
-    # Prepare predefined voices list
-    predefined_voices = []
-    if voice_method == "Predefined Voices":
-        predefined_voices = [speaker0_voice, speaker1_voice, speaker2_voice]
-    
-    return generate_multi_speaker(
-        transcript, voice_method, uploaded_voices, predefined_voices,
-        temperature, max_new_tokens, seed, scene_description, auto_format
+    return generation_service.generate_longform(
+        transcript,
+        voice_choice,
+        uploaded_voice,
+        voice_prompt,
+        temperature,
+        max_new_tokens,
+        seed,
+        scene_description,
+        chunk_size,
     )
 
+# IMPROVED HANDLER FUNCTION FOR MULTI-SPEAKER
 def generate_multi_speaker(
     transcript,
     voice_method,
@@ -922,254 +240,18 @@ def generate_multi_speaker(
     auto_format,
     speaker_pause_duration=config.DEFAULT_SPEAKER_PAUSE_SECONDS
 ):
-    # Initialize model if not already done
-    initialize_model()
-    
-    # Set seed for reproducibility
-    if seed > 0:
-        torch.manual_seed(seed)
-        np.random.seed(seed)
-    
-    # Auto-format transcript if requested
-    if auto_format:
-        transcript = auto_format_multi_speaker(transcript)
-    
-    # Parse speaker assignments
-    speakers = parse_multi_speaker_text(transcript)
-    if not speakers:
-        raise ValueError("No speakers found in transcript. Use [SPEAKER0], [SPEAKER1] format or enable auto-format.")
-    
-    print(f"🎭 Found speakers: {list(speakers.keys())}")
-    
-    # Prepare voice references
-    voice_refs = {}
-    temp_files = []
-    speaker_audio_refs = {}  # For smart voice consistency
-    # NEW: Store both first audio path and first text for each speaker (for Smart Voice)
-    speaker_first_refs = {}  # {speaker_id: (audio_path, text_content)}
-    # NEW: Store uploaded audio and transcription for each speaker (for Upload Voices)
-    uploaded_voice_refs = {}  # {speaker_id: (audio_path, transcription)}
-    
-    try:
-        if voice_method == "Upload Voices":
-            # CRITICAL FIX: Handle uploaded voices properly for each speaker
-            if uploaded_voices:
-                for i, audio in enumerate(uploaded_voices):
-                    if audio is not None and audio[1] is not None:
-                        speaker_key = f"SPEAKER{i}"
-                        print(f"🎤 Processing uploaded voice for {speaker_key}...")
-                        print(f"📊 Audio data: {len(audio[1])} samples at {audio[0]}Hz")
-                        # Save the uploaded audio properly using enhanced method
-                        temp_path = audio_io.enhanced_save_temp_audio_fixed(audio)
-                        # CRITICAL: Create transcription for the voice reference
-                        temp_txt_path = create_voice_reference_txt(temp_path)
-                        # Read the transcription for use as reference text
-                        if os.path.exists(temp_txt_path):
-                            with open(temp_txt_path, 'r', encoding='utf-8') as f:
-                                transcription = f.read().strip()
-                        else:
-                            transcription = config.WHISPER_FALLBACK_TRANSCRIPTION
-                        # Store both audio path and transcription for this speaker
-                        uploaded_voice_refs[speaker_key] = (temp_path, transcription)
-                        temp_files.extend([temp_path, temp_txt_path])
-                        print(f"✅ Setup voice reference for {speaker_key}: {temp_path}")
-                        print(f"📝 Created transcription file: {temp_txt_path}")
-                        print(f"📋 {speaker_key} transcription: '{transcription[:50]}...'")
-            print(f"🎭 Upload Voices setup complete. Voice refs: {list(uploaded_voice_refs.keys())}")
-                        
-        elif voice_method == "Predefined Voices":
-            # Handle predefined voices
-            if predefined_voices:
-                for i, voice_name in enumerate(predefined_voices):
-                    if voice_name and voice_name != config.SMART_VOICE_LABEL:
-                        speaker_key = f"SPEAKER{i}"
-                        ref_audio_path = get_voice_path(voice_name)
-                        if ref_audio_path and os.path.exists(ref_audio_path):
-                            voice_refs[speaker_key] = ref_audio_path
-                            print(f"📁 Setup voice reference for {speaker_key}: {ref_audio_path}")
-                            # Ensure txt file exists - use robust extension handling
-                            txt_path = robust_txt_path_creation(ref_audio_path)
-                            
-                            if not os.path.exists(txt_path):
-                                # Auto-transcribe instead of dummy text
-                                try:
-                                    transcription = transcribe_audio(ref_audio_path)
-                                    with open(txt_path, 'w', encoding='utf-8') as f:
-                                        f.write(transcription)
-                                except Exception as e:
-                                    print(f"⚠️ Failed to transcribe {ref_audio_path}: {e}")
-                                    with open(txt_path, 'w', encoding='utf-8') as f:
-                                        f.write(config.VOICE_SAMPLE_FALLBACK_TRANSCRIPT)
-        
-        # Prepare system message - SAME AS WORKING VOICE CLONING
-        system_content = config.DEFAULT_SYSTEM_MESSAGE
-        
-        if scene_description and scene_description.strip():
-            system_content += (
-                f" {config.SCENE_DESC_START_TAG}\n"
-                f"{scene_description}\n"
-                f"{config.SCENE_DESC_END_TAG}"
-            )
-        
-        # Generate audio for each speaker segment
-        full_audio = []
-        sampling_rate = config.DEFAULT_SAMPLE_RATE
-        
-        # Process transcript line by line
-        lines = transcript.split('\n')
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            # Check if line has speaker tag
-            speaker_match = re.match(r'\[SPEAKER(\d+)\]\s*(.*)', line)
-            if speaker_match:
-                speaker_id = f"SPEAKER{speaker_match.group(1)}"
-                text_content = speaker_match.group(2).strip()
-                
-                if not text_content:
-                    continue
-                
-                print(f"🎭 Generating for {speaker_id}: {text_content[:50]}...")
-                
-                # CRITICAL FIX: Prepare messages based on voice method
-                # This logic determines which voice reference to use for each speaker line
-                
-                if voice_method == "Upload Voices" and speaker_id in uploaded_voice_refs:
-                    # UPLOAD VOICES: Always use the uploaded voice sample and its transcription as reference
-                    ref_audio_path, ref_text = uploaded_voice_refs[speaker_id]
-                    print(f"🎤 Using UPLOADED voice reference for {speaker_id}: {ref_audio_path} with text: '{ref_text}'")
-                    messages = [
-                        Message(role="system", content=system_content),
-                        Message(role="user", content=ref_text),
-                        Message(role="assistant", content=AudioContent(audio_url=ref_audio_path)),
-                        Message(role="user", content=text_content)
-                    ]
-                    
-                elif voice_method == "Predefined Voices" and speaker_id in voice_refs:
-                    # PREDEFINED VOICES: Use the predefined voice sample as reference
-                    print(f"📁 Using PREDEFINED voice reference for {speaker_id}: {voice_refs[speaker_id]}")
-                    messages = [
-                        Message(role="system", content=system_content),
-                        Message(role="user", content="Please speak this text."),
-                        Message(role="assistant", content=AudioContent(audio_url=voice_refs[speaker_id])),
-                        Message(role="user", content=text_content)
-                    ]
-                    
-                elif voice_method == "Smart Voice":
-                    # SMART VOICE: Use consistency logic with auto-generated references
-                    if speaker_id in speaker_first_refs:
-                        # Use the FIRST generated audio and text for this speaker as reference
-                        first_audio_path, first_text = speaker_first_refs[speaker_id]
-                        print(f"🔄 Using FIRST SMART voice reference for {speaker_id}: {first_audio_path} with text: '{first_text}'")
-                        messages = [
-                            Message(role="system", content=system_content),
-                            Message(role="user", content=first_text),
-                            Message(role="assistant", content=AudioContent(audio_url=first_audio_path)),
-                            Message(role="user", content=text_content)
-                        ]
-                    else:
-                        # First time for this speaker - let model pick voice
-                        print(f"🆕 First occurrence of {speaker_id} in SMART mode, letting AI pick voice")
-                        messages = [
-                            Message(role="system", content=system_content),
-                            Message(role="user", content=text_content)
-                        ]
-                        
-                else:
-                    # FALLBACK: This should only happen if no voice reference is available
-                    print(f"⚠️ FALLBACK: No voice reference found for {speaker_id} in {voice_method} mode")
-                    print(f"📋 Available voice_refs: {list(voice_refs.keys())}")
-                    print(f"📋 Available speaker_audio_refs: {list(speaker_audio_refs.keys())}")
-                    messages = [
-                        Message(role="system", content=system_content),
-                        Message(role="user", content=text_content)
-                    ]
-                
-                print(f"📝 Generating audio for: '{text_content}'")
-                
-                # Generate audio with optimizations
-                output = optimized_generate_audio(messages, max_new_tokens, temperature, use_cache=False)
-                
-                # IMPORTANT: Smart Voice consistency logic ONLY applies to Smart Voice mode
-                # For Upload Voices and Predefined Voices, we already have the voice references
-                if voice_method == "Smart Voice" and speaker_id not in speaker_first_refs:
-                    # Save the first generated audio and text for this speaker for future consistency
-                    speaker_audio_path = f"temp_speaker_{speaker_id}_{seed}_{int(time.time())}.wav"
-                    torchaudio.save(speaker_audio_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-                    # Small delay to ensure file is written
-                    time.sleep(0.1)
-                    # CRITICAL: Use auto-transcription for voice reference
-                    transcribed_text = transcribe_audio(speaker_audio_path)
-                    speaker_txt_path = speaker_audio_path.replace(
-                        config.VOICE_LIBRARY_AUDIO_EXTENSION,
-                        config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION,
-                    )
-                    with open(speaker_txt_path, 'w', encoding='utf-8') as f:
-                        f.write(transcribed_text)
-                    # Save both audio path and the first text_content
-                    speaker_first_refs[speaker_id] = (speaker_audio_path, text_content)
-                    temp_files.extend([speaker_audio_path, speaker_txt_path])
-                    print(f"✅ Saved {speaker_id} FIRST SMART voice reference: {speaker_audio_path}")
-                    print(f"📝 Auto-transcribed: '{transcribed_text[:50]}...'")
-                    # Verify files exist
-                    if os.path.exists(speaker_audio_path) and os.path.exists(speaker_txt_path):
-                        print(f"✅ Voice reference files verified for {speaker_id}")
-                    else:
-                        print(f"⚠️ Warning: Voice reference files not created properly for {speaker_id}")
-                
-                # For Upload Voices and Predefined Voices, we DON'T save additional references
-                # because we already have the uploaded/predefined voice samples
-                
-                # Validate output before adding
-                if output.audio is not None and len(output.audio) > 0:
-                    full_audio.append(output.audio)
-                    sampling_rate = output.sampling_rate
-                    print(f"✅ Added audio segment (length: {len(output.audio)} samples)")
-                else:
-                    print(f"⚠️ Empty or invalid audio output for: '{text_content}'")
-                
-                # Add a small pause between different speakers (not between same speaker)
-                if len(full_audio) > 1:
-                    # Check if this is a different speaker than the previous line
-                    prev_line_idx = lines.index(line) - 1
-                    if prev_line_idx >= 0:
-                        prev_line = lines[prev_line_idx].strip()
-                        if prev_line:
-                            prev_match = re.match(r'\[SPEAKER(\d+)\]', prev_line)
-                            if prev_match and prev_match.group(1) != speaker_match.group(1):
-                                # Different speaker, add pause
-                                if speaker_pause_duration > 0:
-                                    pause_samples = int(speaker_pause_duration * sampling_rate)
-                                    pause_audio = np.zeros(pause_samples, dtype=np.float32)
-                                    full_audio.append(pause_audio)
-                                    print(f"🔇 Added {speaker_pause_duration}s pause between speakers")
-                                else:
-                                    print(f"🔇 No pause between speakers (disabled)")
-        
-        # Concatenate all audio chunks and save with organized output
-        if full_audio:
-            full_audio = np.concatenate(full_audio, axis=0)
-            
-            output_path = audio_io.get_output_path(config.OUTPUT_MULTI_SPEAKER_SUBDIR, "multi_speaker_audio")
-            torchaudio.save(output_path, torch.from_numpy(full_audio)[None, :], sampling_rate)
-            
-            print(f"🎉 Multi-speaker audio generated successfully: {output_path}")
-            clear_caches()  # Clear cache after generation
-            return output_path
-        else:
-            clear_caches()
-            raise ValueError("No audio was generated. Check your transcript format and voice samples.")
-    
-    except Exception as e:
-        print(f"❌ Error in multi-speaker generation: {e}")
-        raise e
-    
-    finally:
-        # Clean up temporary files using robust cleanup
-        audio_io.robust_file_cleanup(temp_files)
+    return generation_service.generate_multi_speaker(
+        transcript,
+        voice_method,
+        uploaded_voices,
+        predefined_voices,
+        temperature,
+        max_new_tokens,
+        seed,
+        scene_description,
+        auto_format,
+        speaker_pause_duration,
+    )
 
 def refresh_voice_list():
     updated_voices = get_all_available_voices()
@@ -1905,82 +987,29 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
         if not test_text.strip():
             test_text = "This is a test of my voice with custom parameters."
         
-        # Initialize model if not already done
-        initialize_model()
-        
-        # Create unique temporary file paths to avoid conflicts
-        import tempfile
-        import uuid
-        temp_audio_path = None
-        temp_txt_path = None
-        
         try:
-            # Set seed for reproducibility
-            if seed > 0:
-                torch.manual_seed(seed)
-                np.random.seed(seed)
-            
-            # Create a unique temporary audio file for testing (isolated from voice library)
-            unique_id = uuid.uuid4().hex[:8]
-            temp_audio_path = tempfile.NamedTemporaryFile(delete=False, suffix=f"_test_{unique_id}.wav").name
-            
-            # Copy the uploaded audio to our isolated temp location
-            import shutil
-            shutil.copy2(audio_data, temp_audio_path)
-            
-            # Create a corresponding text file for voice reference (isolated)
-            temp_txt_path = temp_audio_path.replace(
-                config.VOICE_LIBRARY_AUDIO_EXTENSION,
-                config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION,
+            waveform, sample_rate = torchaudio.load(audio_data)
+            audio_array = waveform.numpy()
+            if audio_array.ndim > 1:
+                audio_array = audio_array[0]
+            uploaded_voice = (sample_rate, audio_array)
+            output_path = generation_service.generate_voice_clone(
+                test_text,
+                uploaded_voice,
+                temperature,
+                max_new_tokens,
+                seed,
+                top_k,
+                top_p,
+                min_p,
+                repetition_penalty,
+                ras_win_len,
+                ras_win_max_num_repeat,
+                do_sample,
             )
-            
-            # Auto-transcribe for voice reference
-            try:
-                transcription = transcribe_audio(temp_audio_path)
-                with open(temp_txt_path, 'w', encoding='utf-8') as f:
-                    f.write(transcription)
-            except Exception as e:
-                # Fallback to dummy text if transcription fails
-                with open(temp_txt_path, 'w', encoding='utf-8') as f:
-                    f.write("This is a voice sample for testing.")
-                print(f"⚠️ Transcription failed, using fallback: {e}")
-            
-            # Create messages for voice generation
-            system_content = config.DEFAULT_SYSTEM_MESSAGE
-            messages = [
-                Message(role="system", content=system_content),
-                Message(role="user", content="Please speak this text."),
-                Message(role="assistant", content=AudioContent(audio_url=temp_audio_path)),
-                Message(role="user", content=test_text)
-            ]
-            
-            # Generate audio with custom parameters
-            min_p_value = min_p if min_p > 0 else None
-            output = optimized_generate_audio(
-                messages, max_new_tokens, temperature, top_k, top_p, min_p_value, 
-                repetition_penalty, ras_win_len, ras_win_max_num_repeat, do_sample, use_cache=False
-            )
-            
-            # Save test output to a clearly marked test location
-            test_output_path = audio_io.get_output_path(
-                config.OUTPUT_VOICE_CLONING_SUBDIR,
-                f"voice_test_{unique_id}"
-            )
-            torchaudio.save(test_output_path, torch.from_numpy(output.audio)[None, :], output.sampling_rate)
-            
-            return test_output_path, "✅ Voice test completed successfully!"
-            
+            return output_path, "✅ Voice test completed successfully!"
         except Exception as e:
             return None, f"❌ Error testing voice: {str(e)}"
-        
-        finally:
-            # Clean up temporary files
-            for path in [temp_audio_path, temp_txt_path]:
-                if path and os.path.exists(path):
-                    try:
-                        os.unlink(path)
-                    except Exception as e:
-                        print(f"Warning: Could not clean up temp file {path}: {e}")
     
     def handle_save_voice_with_config(audio_data, voice_name, description, temperature, max_new_tokens, seed,
                                      top_k, top_p, min_p, repetition_penalty, ras_win_len, 
@@ -2333,125 +1362,35 @@ with gr.Blocks(title="Higgs Audio v2 Generator") as demo:
     
 
     
-    def generate_dynamic_multi_speaker(text, voice_method, speaker_mapping, temperature, max_new_tokens, seed, scene_description, 
-                                     enable_normalization, normalization_method, target_volume, speaker_pause_duration, *voice_components):
-        """Generate multi-speaker audio with dynamic speaker detection and volume normalization"""
-        if not text or not speaker_mapping:
-            return None
-        
-        try:
-            # Initialize model
-            initialize_model()
-            
-            # Set seed for reproducibility
-            if seed > 0:
-                torch.manual_seed(seed)
-                np.random.seed(seed)
-            
-            # Convert text to SPEAKER format
-            converted_text = convert_to_speaker_format(text, speaker_mapping)
-            print(f"🎭 Converted text: {converted_text[:200]}...")
-            
-            # Generate the audio based on voice method
-            output_audio_path = None
-            
-            if voice_method == "Smart Voice":
-                # Use the existing generate_multi_speaker function with Smart Voice
-                output_audio_path = generate_multi_speaker(
-                    converted_text, "Smart Voice", [], [],
-                    temperature, max_new_tokens, seed, scene_description, False, speaker_pause_duration
-                )
-            elif voice_method == "Upload Voices":
-                # voice_components structure: [upload_audio_0, upload_audio_1, ..., upload_audio_9, library_dropdown_0, ..., library_dropdown_9]
-                # Extract the first 10 components (upload audio components)
-                uploaded_voices = []
-                num_speakers = len(speaker_mapping)
-                
-                for i in range(min(num_speakers, 10)):
-                    if i < len(voice_components) and voice_components[i] is not None:
-                        uploaded_voices.append(voice_components[i])
-                    else:
-                        uploaded_voices.append(None)
-                
-                print(f"🎭 Using uploaded voices for {num_speakers} speakers")
-                
-                # Use the existing generate_multi_speaker function with Upload Voices
-                output_audio_path = generate_multi_speaker(
-                    converted_text, "Upload Voices", uploaded_voices, [],
-                    temperature, max_new_tokens, seed, scene_description, False, speaker_pause_duration
-                )
-            elif voice_method == "Voice Library":
-                # voice_components structure: [upload_audio_0, ..., upload_audio_9, library_dropdown_0, ..., library_dropdown_9]
-                # Extract the last 10 components (library dropdown selections)
-                library_selections = voice_components[10:20] if len(voice_components) >= 20 else voice_components[-10:]
-                predefined_voices = []
-                num_speakers = len(speaker_mapping)
-                
-                for i in range(max(3, num_speakers)):  # Ensure at least 3 for compatibility
-                    if (
-                        i < len(library_selections)
-                        and library_selections[i]
-                        and library_selections[i] != config.SMART_VOICE_LABEL
-                    ):
-                        predefined_voices.append(library_selections[i])
-                    else:
-                        predefined_voices.append(config.SMART_VOICE_LABEL)
-                
-                print(f"🎭 Using library voices: {predefined_voices[:num_speakers]}")
-                
-                # Use the existing generate_multi_speaker function with Predefined Voices
-                output_audio_path = generate_multi_speaker(
-                    converted_text, "Predefined Voices", [], predefined_voices,
-                    temperature, max_new_tokens, seed, scene_description, False, speaker_pause_duration
-                )
-            
-            # Apply volume normalization if enabled and audio was generated
-            if output_audio_path and enable_normalization:
-                print(f"🔊 Applying {normalization_method} volume normalization...")
-                
-                # Load the generated audio
-                audio_data, sample_rate = torchaudio.load(output_audio_path)
-                
-                # Apply normalization using our custom module
-                normalized_audio = enhance_multi_speaker_audio(
-                    audio_data.squeeze(),  # Remove batch dimension if present
-                    sample_rate=sample_rate,
-                    normalization_method=normalization_method,
-                    target_rms=target_volume
-                )
-                
-                # Create normalized output filename
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                normalized_filename = f"{timestamp}_normalized_multi_speaker_audio.wav"
-                normalized_path = os.path.join("output", "multi_speaker", normalized_filename)
-                
-                # Ensure output directory exists
-                os.makedirs(os.path.dirname(normalized_path), exist_ok=True)
-                
-                # Save normalized audio
-                if isinstance(normalized_audio, torch.Tensor):
-                    # Ensure audio is 2D (channels, samples)
-                    if len(normalized_audio.shape) == 1:
-                        normalized_audio = normalized_audio.unsqueeze(0)
-                    torchaudio.save(normalized_path, normalized_audio, sample_rate)
-                else:
-                    # Convert numpy to tensor
-                    normalized_tensor = torch.tensor(normalized_audio, dtype=torch.float32)
-                    if len(normalized_tensor.shape) == 1:
-                        normalized_tensor = normalized_tensor.unsqueeze(0)
-                    torchaudio.save(normalized_path, normalized_tensor, sample_rate)
-                
-                print(f"🎵 Saved normalized audio to: {normalized_path}")
-                return normalized_path
-            
-            return output_audio_path
-                
-        except Exception as e:
-            print(f"❌ Error generating dynamic multi-speaker audio: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            return None
-    
+    def generate_dynamic_multi_speaker(
+        text,
+        voice_method,
+        speaker_mapping,
+        temperature,
+        max_new_tokens,
+        seed,
+        scene_description,
+        enable_normalization,
+        normalization_method,
+        target_volume,
+        speaker_pause_duration,
+        *voice_components,
+    ):
+        return generation_service.generate_dynamic_multi_speaker(
+            text,
+            voice_method,
+            speaker_mapping,
+            temperature,
+            max_new_tokens,
+            seed,
+            scene_description,
+            enable_normalization,
+            normalization_method,
+            target_volume,
+            speaker_pause_duration,
+            *voice_components,
+        )
+
     def auto_populate_voice_name(audio_data):
         """Automatically populate voice name from uploaded audio filename"""
         if audio_data is None:
