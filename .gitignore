@@ -211,3 +211,7 @@ result/
 
 # Ruff
 .ruff_cache/
+
+# IDE
+.vscode
+.idea
