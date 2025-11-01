@@ -39,6 +39,7 @@ whisper-fast = [
 dev = [
     "ruff==0.12.2",
     "pytest",
+    "mypy",
 ]
 
 [build-system]
