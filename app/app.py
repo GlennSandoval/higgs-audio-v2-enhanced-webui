@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import gradio as gr
 import torch
 
 from app import generation, startup, voice_library
 from app.ui import build_demo
+
+if TYPE_CHECKING:  # pragma: no cover - import for type checking only
+    from gradio_app.config import BootstrapConfig
 
 
 @dataclass(frozen=True)
@@ -21,9 +26,12 @@ class AppContext:
     generation_service: generation.GenerationService
     audio_dependency_report: dict[str, bool]
     demo: gr.Blocks
+    bootstrap_config: "BootstrapConfig"
 
 
-def create_app() -> AppContext:
+def create_app_context(
+    bootstrap_config: "BootstrapConfig" | None = None,
+) -> AppContext:
     """
     Configure the environment, initialize services, and build the Gradio demo.
 
@@ -31,7 +39,16 @@ def create_app() -> AppContext:
         An ``AppContext`` with the resolved device, initialized services, dependency
         report, and ready-to-launch Gradio ``Blocks`` instance.
     """
+    if bootstrap_config is None:
+        from gradio_app.config import BootstrapConfig as _BootstrapConfig
+
+        resolved_config = _BootstrapConfig.from_environment()
+    else:
+        resolved_config = bootstrap_config
+
     startup.configure_environment()
+    if resolved_config.hf_token and not os.environ.get("HUGGINGFACEHUB_API_TOKEN"):
+        os.environ["HUGGINGFACEHUB_API_TOKEN"] = resolved_config.hf_token
     device = startup.select_device()
     startup.ensure_output_directories()
     dependency_report = startup.check_audio_dependencies()
@@ -55,9 +72,10 @@ def create_app() -> AppContext:
         generation_service=generation_service,
         audio_dependency_report=dependency_report,
         demo=demo,
+        bootstrap_config=resolved_config,
     )
 
 
 def create_demo() -> gr.Blocks:
     """Convenience helper that returns a ready-to-launch Gradio ``Blocks``."""
-    return create_app().demo
+    return create_app_context().demo

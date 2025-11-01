@@ -40,9 +40,11 @@ def verify_imports():
 def verify_application_wiring():
     """Ensure the central application wiring can be constructed."""
     try:
-        from app import create_app
+        from gradio_app.main import create_app
 
-        create_app()
+        demo = create_app()
+        if demo is None:
+            raise RuntimeError("Gradio app factory returned None")
         print("✅ Application wiring constructed successfully")
         return True
     except Exception as exc:  # pylint: disable=broad-except
