@@ -8,7 +8,7 @@ from typing import Any
 import gradio as gr
 
 from app.app import AppContext, create_app_context
-from gradio_app.config import BootstrapConfig
+from app.gradio.config import BootstrapConfig
 
 
 @dataclass(frozen=True)

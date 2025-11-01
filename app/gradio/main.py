@@ -7,8 +7,8 @@ from typing import Iterable
 
 import gradio as gr
 
-from gradio_app.config import BootstrapConfig
-from gradio_app.controllers import AppController
+from app.gradio.config import BootstrapConfig
+from app.gradio.controllers import AppController
 
 
 def _format_dependency_report(report: Iterable[tuple[str, bool]]) -> str:

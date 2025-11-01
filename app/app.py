@@ -17,7 +17,7 @@ from app.services.voice_service import WHISPER_AVAILABLE
 from app.ui import build_demo
 
 if TYPE_CHECKING:  # pragma: no cover - import for type checking only
-    from gradio_app.config import BootstrapConfig
+    from app.gradio.config import BootstrapConfig
 
 
 @dataclass(frozen=True)
@@ -44,7 +44,7 @@ def create_app_context(
         report, and ready-to-launch Gradio ``Blocks`` instance.
     """
     if bootstrap_config is None:
-        from gradio_app.config import BootstrapConfig as _BootstrapConfig
+        from app.gradio.config import BootstrapConfig as _BootstrapConfig
 
         resolved_config = _BootstrapConfig.from_environment()
     else:

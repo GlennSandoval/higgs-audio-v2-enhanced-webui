@@ -5,8 +5,8 @@ from __future__ import annotations
 import argparse
 
 from app import config as app_config
-from gradio_app import BootstrapConfig
-from gradio_app.main import build_controller, format_startup_banner
+from app.gradio import BootstrapConfig
+from app.gradio.main import build_controller, format_startup_banner
 
 
 def _parse_args() -> argparse.Namespace:

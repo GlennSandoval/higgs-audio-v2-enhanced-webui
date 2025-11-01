@@ -197,17 +197,17 @@ $env:TRANSFORMERS_CACHE=$env:HF_HUB_CACHE
 ```
 higgs-audio-v2-enhanced-webui/
 ├── higgs_audio_gradio.py          # Entry point (CLI argument parsing only)
-├── gradio_app/                   # Gradio application layer
-│   ├── __init__.py               # Public exports
-│   ├── main.py                   # Application factory (build_controller, create_app)
-│   ├── config.py                 # Bootstrap configuration (HF tokens, cache paths)
-│   └── controllers.py            # AppController orchestration
 ├── app/                          # Core application services
 │   ├── __init__.py               # Public exports (AppContext, create_app_context)
 │   ├── app.py                    # Application context wiring
 │   ├── config.py                 # Configuration constants (model IDs, paths, defaults)
 │   ├── startup.py                # Environment setup and dependency checks
 │   ├── audio_io.py               # Audio file I/O and format conversion
+│   ├── gradio/                   # Gradio application layer
+│   │   ├── __init__.py           # Public exports
+│   │   ├── main.py               # Application factory (build_controller, create_app)
+│   │   ├── config.py             # Bootstrap configuration (HF tokens, cache paths)
+│   │   └── controllers.py        # AppController orchestration
 │   ├── services/                 # Business logic services
 │   │   ├── __init__.py           # Service exports
 │   │   ├── generation_service.py # Audio generation orchestration (GenerationService)
@@ -241,7 +241,7 @@ higgs-audio-v2-enhanced-webui/
 
 The codebase follows a **modular, layered architecture** designed for maintainability and testability:
 
-**Layer 1: Entry Point & Bootstrap** (`higgs_audio_gradio.py`, `gradio_app/`)
+**Layer 1: Entry Point & Bootstrap** (`higgs_audio_gradio.py`, `app/gradio/`)
 - **Entry Point**: Minimal CLI argument parsing, delegates to Gradio app layer
 - **Bootstrap Config**: Environment-based configuration (HF tokens, cache directories)
 - **Application Factory**: `build_controller()` creates the complete app controller
@@ -276,21 +276,6 @@ The codebase follows a **modular, layered architecture** designed for maintainab
 - **Testability**: Core logic separated from Gradio callbacks
 - **Immutability**: `AppContext` is frozen to prevent runtime modification
 - **Factory pattern**: `create_app_context()` and `build_controller()` for initialization
-
-## 🚀 Performance Tips
-
-### For Better Generation:
-- Use **GPU** if available (CUDA support)
-- Enable **caching** for faster repeated generations
-- Use **appropriate parameters** for your content type
-- **Reuse existing caches** by pointing `HF_HOME` to shared storage
-
-### For Public Sharing:
-- Prefer `--share` only when you trust the network you are exposing
-- Use `--server-name 0.0.0.0` to make the UI visible on your LAN
-- Monitor **resource usage** when sharing publicly
-- Set **reasonable limits** on generation length
-- Consider **authentication** for production use
 
 ## 🤝 Contributing
 

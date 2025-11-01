@@ -40,7 +40,7 @@ def verify_imports():
 def verify_application_wiring():
     """Ensure the central application wiring can be constructed."""
     try:
-        from gradio_app.main import create_app
+        from app.gradio.main import create_app
 
         demo = create_app()
         if demo is None:

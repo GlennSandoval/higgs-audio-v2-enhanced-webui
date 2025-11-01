@@ -20,4 +20,4 @@ def __getattr__(name: str):  # pragma: no cover - thin import shim
 		from . import main as _main
 
 		return getattr(_main, name)
-	raise AttributeError(f"module 'gradio_app' has no attribute {name!r}")
+	raise AttributeError(f"module 'app.gradio' has no attribute {name!r}")

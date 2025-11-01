@@ -6,7 +6,7 @@ import gradio as gr
 import pytest
 
 from app import config
-from gradio_app import main
+from app.gradio import main
 
 
 def _dependency_report_stub() -> dict[str, bool]:
