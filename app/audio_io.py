@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import os
 import tempfile
+from collections.abc import Iterable
 from datetime import datetime
-from typing import Iterable, Optional, Tuple, Union
+from typing import Union
 
 import numpy as np
 import torch
@@ -35,7 +36,7 @@ def convert_audio_to_standard_format(
     audio_path: str,
     target_sample_rate: int = config.DEFAULT_SAMPLE_RATE,
     force_mono: bool = False,
-) -> Tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int]:
     """
     Load audio from ``audio_path`` and return a numpy array plus the sample rate.
 
@@ -229,9 +230,9 @@ def save_temp_audio_robust(
 
 
 def process_uploaded_audio(
-    uploaded_audio: Tuple[int, Union[np.ndarray, torch.Tensor]],
+    uploaded_audio: tuple[int, Union[np.ndarray, torch.Tensor]],
     force_mono: bool = False,
-) -> Tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int]:
     """
     Normalize audio uploaded through Gradio widgets.
 
@@ -288,7 +289,7 @@ def process_uploaded_audio(
 
 
 def enhanced_save_temp_audio_fixed(
-    uploaded_voice: Optional[Tuple[int, Union[np.ndarray, torch.Tensor]]],
+    uploaded_voice: tuple[int, Union[np.ndarray, torch.Tensor]] | None,
     force_mono: bool = False,
 ) -> str:
     """
@@ -312,7 +313,7 @@ def enhanced_save_temp_audio_fixed(
 
 def load_audio_file_robust(
     file_path: str, target_sample_rate: int = config.DEFAULT_SAMPLE_RATE
-) -> Tuple[np.ndarray, int]:
+) -> tuple[np.ndarray, int]:
     """Load an arbitrary audio file from disk using ``convert_audio_to_standard_format``."""
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Audio file not found: {file_path}")
@@ -321,7 +322,7 @@ def load_audio_file_robust(
 
 
 def safe_audio_processing(
-    uploaded_voice: Optional[Tuple[int, Union[np.ndarray, torch.Tensor]]],
+    uploaded_voice: tuple[int, Union[np.ndarray, torch.Tensor]] | None,
     operation_name: str,
 ) -> str:
     """
@@ -366,7 +367,7 @@ def save_audio_reference_if_enabled(audio_path: str, category: str, filename_bas
     return None
 
 
-def robust_file_cleanup(files: Union[str, Iterable[Optional[str]]]) -> None:
+def robust_file_cleanup(files: Union[str, Iterable[str | None]]) -> None:
     """
     Delete one or more files if they exist, ignoring missing files and errors.
     """

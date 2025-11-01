@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-from typing import Dict, Tuple
 
 import torch
 
@@ -28,7 +27,7 @@ def select_device() -> torch.device:
     return device
 
 
-def initialize_caches() -> Tuple[dict, dict]:
+def initialize_caches() -> tuple[dict, dict]:
     """Create the audio and token cache structures."""
     return {}, {}
 
@@ -53,7 +52,7 @@ def install_ffmpeg_if_needed() -> bool:
     return True
 
 
-def check_audio_dependencies() -> Dict[str, bool]:
+def check_audio_dependencies() -> dict[str, bool]:
     """Inspect optional audio dependencies and report their availability."""
     print("🔍 Checking audio processing dependencies...")
 

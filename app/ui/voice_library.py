@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from datetime import datetime
-from typing import List
 
 import gradio as gr
 import torchaudio
@@ -505,7 +504,7 @@ def register_callbacks(
             else None
         )
 
-        info_lines: List[str] = [f"## 🎤 {voice_name}\n\n"]
+        info_lines: list[str] = [f"## 🎤 {voice_name}\n\n"]
 
         description = voice_config.get("description")
         if description:
@@ -513,7 +512,7 @@ def register_callbacks(
 
         if transcript_path and os.path.exists(transcript_path):
             try:
-                with open(transcript_path, "r", encoding="utf-8") as handle:
+                with open(transcript_path, encoding="utf-8") as handle:
                     transcript = handle.read().strip()
                 if len(transcript) > 200:
                     transcript = transcript[:200] + "..."

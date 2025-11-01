@@ -196,14 +196,65 @@ $env:TRANSFORMERS_CACHE=$env:HF_HUB_CACHE
 
 ```
 higgs-audio-v2-enhanced-webui/
-├── higgs_audio_gradio.py          # Main application
-├── audio_processing_utils.py      # Volume normalization module
-├── run.sh                        # Mac launch helper (sets FFmpeg paths, runs uv)
+├── higgs_audio_gradio.py          # Entry point (CLI argument parsing, app launcher)
+├── app/                          # Modular application components
+│   ├── __init__.py               # Public exports (AppContext, create_app)
+│   ├── app.py                    # Central application wiring
+│   ├── config.py                 # Configuration and constants
+│   ├── startup.py                # Environment setup and dependency checks
+│   ├── audio_io.py               # Audio file I/O and format conversion
+│   ├── voice_library.py          # Voice library management and transcription
+│   ├── generation.py             # Audio generation orchestration and caching
+│   └── ui/                       # Gradio UI tab builders
+│       ├── __init__.py           # Demo builder (build_demo)
+│       ├── basic.py              # Basic generation tab
+│       ├── voice_cloning.py      # Voice cloning tab
+│       ├── longform.py           # Long-form generation tab
+│       ├── multi_speaker.py      # Multi-speaker generation tab
+│       └── voice_library.py      # Voice library management tab
+├── audio_processing_utils.py      # Volume normalization and enhancement
+├── boson_multimodal/             # Core Higgs Audio model components
+│   ├── model/                    # Model architecture
+│   ├── serve/                    # Serving engine (HiggsAudioServeEngine)
+│   ├── audio_processing/         # Audio tokenizer and codec
+│   └── data_types.py             # ChatMLSample, Message, AudioContent
+├── tests/                        # Unit and integration tests
 ├── voice_library/                # Saved voices directory
 ├── output/                       # Generated audio output
-├── cache/                        # Model cache directory
+├── run.sh                        # Mac launch helper (sets FFmpeg paths, runs uv)
 └── README.md                     # This file
 ```
+
+### Code Architecture
+
+The codebase follows a **modular, layered architecture** designed for maintainability and testability:
+
+**Layer 1: Configuration & Startup** (`app/config.py`, `app/startup.py`)
+- Central configuration management (model IDs, paths, defaults)
+- Environment setup (device selection, cache initialization)
+- Dependency checking (FFmpeg, pydub, scipy)
+
+**Layer 2: Core Services** (`app/audio_io.py`, `app/voice_library.py`, `app/generation.py`)
+- **Audio I/O**: Format conversion, loading, saving with 24kHz mono enforcement
+- **Voice Library**: CRUD operations, Whisper transcription, config persistence
+- **Generation**: Model initialization, caching, multi-speaker orchestration
+
+**Layer 3: UI Components** (`app/ui/*.py`)
+- Each Gradio tab in its own module with component builders and callbacks
+- Clean separation between UI logic and business logic
+- Dependency injection for services (generation, voice library)
+
+**Layer 4: Application Wiring** (`app/app.py`)
+- `create_app()` orchestrates service initialization and UI construction
+- Returns `AppContext` with device, services, and demo instance
+- Entry point (`higgs_audio_gradio.py`) simply parses args and launches
+
+**Key Design Principles:**
+- **Acyclic dependencies**: Config → Startup → Services → UI
+- **Dependency injection**: Services passed to UI builders, not imported directly
+- **Single responsibility**: Each module has a focused purpose
+- **Testability**: Core logic separated from Gradio callbacks
+- **Immutability**: `AppContext` is frozen to prevent runtime modification
 
 ## 🚀 Performance Tips
 

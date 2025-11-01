@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict
 
 import gradio as gr
 import torch
@@ -20,7 +19,7 @@ class AppContext:
     whisper_available: bool
     voice_library_service: voice_library.VoiceLibrary
     generation_service: generation.GenerationService
-    audio_dependency_report: Dict[str, bool]
+    audio_dependency_report: dict[str, bool]
     demo: gr.Blocks
 
 

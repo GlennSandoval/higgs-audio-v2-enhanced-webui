@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable, Iterable, List, Optional
 
 import numpy as np
 import torch
@@ -14,7 +14,7 @@ import torch
 from app import audio_io, config
 
 WHISPER_AVAILABLE: bool = False
-_WHISPER_BACKEND: Optional[str] = None
+_WHISPER_BACKEND: str | None = None
 _whisper_model = None
 _whisper_module = None
 _faster_whisper_model_cls = None
@@ -118,7 +118,7 @@ def robust_txt_path_creation(audio_path: str) -> str:
     return str(path) + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
 
 
-def create_voice_reference_txt(audio_path: str, transcript_sample: Optional[str] = None) -> str:
+def create_voice_reference_txt(audio_path: str, transcript_sample: str | None = None) -> str:
     """Create a transcript file for a saved voice sample."""
     transcript_path = robust_txt_path_creation(audio_path)
     transcript = transcript_sample if transcript_sample is not None else transcribe_audio(audio_path)
@@ -135,7 +135,7 @@ class VoiceLibrary:
 
     def __init__(
         self,
-        transcribe_fn: Optional[TranscribeFn] = None,
+        transcribe_fn: TranscribeFn | None = None,
         save_temp_audio_fn: Callable[[np.ndarray, int], str] = audio_io.save_temp_audio_robust,
         voice_directory: str = config.VOICE_LIBRARY_DIR,
         voice_prompts_dir: str = config.VOICE_PROMPTS_DIR,
@@ -146,12 +146,12 @@ class VoiceLibrary:
         self._voice_prompts_dir = voice_prompts_dir
 
     # Listing and configuration helpers -------------------------------------------------
-    def list_voice_library_voices(self) -> List[str]:
+    def list_voice_library_voices(self) -> list[str]:
         """Return the list of saved voices in the library."""
         if not os.path.exists(self._voice_directory):
             return []
 
-        voices: List[str] = []
+        voices: list[str] = []
         for entry in os.listdir(self._voice_directory):
             if entry.endswith(config.VOICE_LIBRARY_AUDIO_EXTENSION):
                 voices.append(entry.replace(config.VOICE_LIBRARY_AUDIO_EXTENSION, ""))
@@ -185,7 +185,7 @@ class VoiceLibrary:
         config_path = self.get_voice_config_path(voice_name)
         if os.path.exists(config_path):
             try:
-                with open(config_path, "r", encoding="utf-8") as handle:
+                with open(config_path, encoding="utf-8") as handle:
                     return json.load(handle)
             except Exception as exc:
                 print(f"Error loading voice config: {exc}")
@@ -245,9 +245,9 @@ class VoiceLibrary:
             return f"❌ Error deleting voice: {exc}"
 
     # Resolution helpers -----------------------------------------------------------------
-    def list_all_available_voices(self) -> List[str]:
+    def list_all_available_voices(self) -> list[str]:
         """Return combined list of smart, predefined, and library voices."""
-        predefined: List[str] = []
+        predefined: list[str] = []
         if os.path.exists(self._voice_prompts_dir):
             for entry in os.listdir(self._voice_prompts_dir):
                 if entry.endswith((config.VOICE_LIBRARY_AUDIO_EXTENSION, ".mp3")):
@@ -260,7 +260,7 @@ class VoiceLibrary:
         combined.extend(f"{config.LIBRARY_VOICE_PREFIX}{voice}" for voice in library)
         return combined
 
-    def get_voice_path(self, voice_selection: Optional[str]) -> Optional[str]:
+    def get_voice_path(self, voice_selection: str | None) -> str | None:
         """Resolve a voice selector value to a filesystem path."""
         if not voice_selection or voice_selection == config.SMART_VOICE_LABEL:
             return None
@@ -280,7 +280,7 @@ class VoiceLibrary:
 
     # Transcript utilities ---------------------------------------------------------------
     def create_voice_reference_txt(
-        self, audio_path: str, transcript_sample: Optional[str] = None
+        self, audio_path: str, transcript_sample: str | None = None
     ) -> str:
         """Create the transcript file for an audio reference."""
         return create_voice_reference_txt(audio_path, transcript_sample)

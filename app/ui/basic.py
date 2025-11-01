@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any
 
 import gradio as gr
 
 from app import config
-from app.voice_library import VoiceLibrary
 from app.generation import GenerationService
+from app.voice_library import VoiceLibrary
 
 
 @dataclass
 class BasicTabElements:
     """Gradio components required for the basic generation tab."""
 
-    inputs: List[gr.components.Component]
+    inputs: list[gr.components.Component]
     voice_prompt: gr.Dropdown
     refresh_button: gr.Button
     generate_button: gr.Button
@@ -30,7 +30,7 @@ def build_tab(
 ) -> BasicTabElements:
     """Render the basic generation tab and return the relevant components."""
 
-    def _current_voice_choices() -> List[str]:
+    def _current_voice_choices() -> list[str]:
         return voice_library_service.list_all_available_voices()
 
     with gr.Tab("Basic Generation"):
@@ -182,7 +182,7 @@ def build_tab(
                     """
                 )
 
-    inputs: List[gr.components.Component] = [
+    inputs: list[gr.components.Component] = [
         transcript,
         voice_prompt,
         temperature,

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 import gradio as gr
 
@@ -15,7 +14,7 @@ from app.generation import GenerationService
 class VoiceCloningTabElements:
     """Components and IO wiring for the voice cloning tab."""
 
-    inputs: List[gr.components.Component]
+    inputs: list[gr.components.Component]
     generate_button: gr.Button
     output_audio: gr.Audio
 
@@ -165,7 +164,7 @@ def build_tab(
                     """
                 )
 
-    inputs: List[gr.components.Component] = [
+    inputs: list[gr.components.Component] = [
         transcript,
         uploaded_voice,
         temperature,

@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import argparse
-from typing import Dict
 
 from app import AppContext, create_app
 
 
-def _format_dependency_report(report: Dict[str, bool]) -> str:
+def _format_dependency_report(report: dict[str, bool]) -> str:
     """Return a human-friendly dependency availability summary."""
     lines = []
     for name, available in sorted(report.items()):

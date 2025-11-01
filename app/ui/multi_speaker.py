@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Sequence, Tuple
 import re
+from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import Any
 
 import gradio as gr
 
@@ -29,8 +30,8 @@ class MultiSpeakerTabElements:
     library_group: gr.Group
     speaker_assignment: gr.Column
     assignment_content: gr.Markdown
-    upload_slots: List[Tuple[gr.Row, gr.Audio]]
-    library_slots: List[gr.Dropdown]
+    upload_slots: list[tuple[gr.Row, gr.Audio]]
+    library_slots: list[gr.Dropdown]
     refresh_library_button: gr.Button
     scene_description: gr.TextArea
     temperature: gr.Slider
@@ -41,7 +42,7 @@ class MultiSpeakerTabElements:
     target_volume: gr.Slider
     speaker_pause: gr.Slider
     output_audio: gr.Audio
-    generation_inputs: List[gr.components.Component]
+    generation_inputs: list[gr.components.Component]
 
 
 def build_tab(
@@ -51,7 +52,7 @@ def build_tab(
 ) -> MultiSpeakerTabElements:
     """Render the multi-speaker tab."""
 
-    def _current_voice_choices() -> List[str]:
+    def _current_voice_choices() -> list[str]:
         return voice_library_service.list_all_available_voices()
 
     with gr.Tab("Multi-Speaker Generation"):
@@ -106,7 +107,7 @@ def build_tab(
                         gr.Markdown(
                             "*Upload a voice sample for each speaker. Files will be auto-transcribed.*"
                         )
-                        upload_slots: List[Tuple[gr.Row, gr.Audio]] = []
+                        upload_slots: list[tuple[gr.Row, gr.Audio]] = []
                         for index in range(10):
                             with gr.Row(visible=False) as upload_row:
                                 speaker_audio = gr.Audio(
@@ -119,7 +120,7 @@ def build_tab(
                     with gr.Group(visible=False) as library_group:
                         gr.Markdown("### Select Voices from Library")
                         gr.Markdown("*Choose a saved voice for each speaker*")
-                        library_slots: List[gr.Dropdown] = []
+                        library_slots: list[gr.Dropdown] = []
                         for index in range(10):
                             speaker_dropdown = gr.Dropdown(
                                 choices=_current_voice_choices(),
@@ -237,7 +238,7 @@ def build_tab(
         detected_speakers_state = gr.State([])
         speaker_mapping_state = gr.State({})
 
-    generation_inputs: List[gr.components.Component] = [
+    generation_inputs: list[gr.components.Component] = [
         transcript,
         voice_method,
         speaker_mapping_state,
@@ -292,7 +293,7 @@ def register_callbacks(
 ) -> None:
     """Wire the callbacks for the multi-speaker tab."""
 
-    def detect_dynamic_speakers(text: str) -> List[str]:
+    def detect_dynamic_speakers(text: str) -> list[str]:
         """Detect speaker names in bracketed dialogue."""
         if not text or not text.strip():
             return []
@@ -300,7 +301,7 @@ def register_callbacks(
         pattern = r"^\s*\[([^\]]+)\]\s*[:.]?\s*(.+?)(?=^\s*\[[^\]]+\]|$)"
         matches = re.findall(pattern, text, re.MULTILINE | re.DOTALL)
 
-        speakers: List[str] = []
+        speakers: list[str] = []
         seen = set()
         for speaker_name, _ in matches:
             clean_name = speaker_name.strip()
@@ -353,8 +354,8 @@ def register_callbacks(
 
         return gr.update()
 
-    def update_upload_slots(speakers: Sequence[str]) -> List[Any]:
-        updates: List[Any] = []
+    def update_upload_slots(speakers: Sequence[str]) -> list[Any]:
+        updates: list[Any] = []
         for index in range(10):
             visible = index < len(speakers)
             updates.append(gr.update(visible=visible))
@@ -367,8 +368,8 @@ def register_callbacks(
             updates.append(gr.update(label=label, visible=index < len(speakers)))
         return updates
 
-    def update_library_slots(speakers: Sequence[str]) -> List[Any]:
-        updates: List[Any] = []
+    def update_library_slots(speakers: Sequence[str]) -> list[Any]:
+        updates: list[Any] = []
         for index in range(10):
             if index < len(speakers):
                 updates.append(
@@ -410,7 +411,7 @@ def register_callbacks(
                 "*No speakers detected*",
             )
 
-        speaker_mapping: Dict[str, str] = {}
+        speaker_mapping: dict[str, str] = {}
         for index, speaker in enumerate(speakers):
             speaker_mapping[speaker] = f"SPEAKER{index}"
 
@@ -438,7 +439,7 @@ def register_callbacks(
 
     def update_voice_method_visibility(
         voice_method: str, detected_speakers: Sequence[str]
-    ) -> List[Any]:
+    ) -> list[Any]:
         upload_updates = update_upload_slots(
             detected_speakers if voice_method == "Upload Voices" else []
         )
@@ -446,7 +447,7 @@ def register_callbacks(
             detected_speakers if voice_method == "Voice Library" else []
         )
 
-        outputs: List[Any] = [
+        outputs: list[Any] = [
             gr.update(visible=voice_method == "Smart Voice"),
             gr.update(visible=voice_method == "Upload Voices"),
             gr.update(visible=voice_method == "Voice Library"),
@@ -466,7 +467,7 @@ def register_callbacks(
     def generate_dynamic_multi_speaker(
         text: str,
         voice_method: str,
-        speaker_mapping: Dict[str, str],
+        speaker_mapping: dict[str, str],
         temperature: float,
         max_new_tokens: int,
         seed: int,
@@ -512,7 +513,7 @@ def register_callbacks(
         ],
     )
 
-    voice_method_outputs: List[gr.components.Component] = [
+    voice_method_outputs: list[gr.components.Component] = [
         elements.smart_voice_group,
         elements.upload_group,
         elements.library_group,
