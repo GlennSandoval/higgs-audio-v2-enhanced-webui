@@ -14,10 +14,10 @@ import torch
 import torchaudio
 
 from app import audio_io, config, startup
+from app.audio import (AudioBuffer, enhance_multi_speaker_audio,
+                       normalize_audio_volume)
 from app.services.cache import GenerationCache
 from app.services.voice_service import VoiceLibrary, transcribe_audio
-from audio_processing_utils import (enhance_multi_speaker_audio,
-                                    normalize_audio_volume)
 from boson_multimodal.data_types import AudioContent, ChatMLSample, Message
 from boson_multimodal.serve.serve_engine import (HiggsAudioResponse,
                                                  HiggsAudioServeEngine)
@@ -330,22 +330,15 @@ class GenerationService:
         if enable_normalization:
             print("🔊 Applying volume normalization to basic generation...")
             waveform, sample_rate = torchaudio.load(output_path)
+            buffer = AudioBuffer.from_tensor(waveform, sample_rate)
             normalized_audio = normalize_audio_volume(
-                waveform.squeeze(), target_rms=target_volume, sample_rate=sample_rate
+                buffer, target_rms=target_volume
             )
             normalized_path = audio_io.get_output_path(
                 config.OUTPUT_BASIC_SUBDIR, "normalized_basic_audio"
             )
 
-            if isinstance(normalized_audio, torch.Tensor):
-                if normalized_audio.ndim == 1:
-                    normalized_audio = normalized_audio.unsqueeze(0)
-                torchaudio.save(normalized_path, normalized_audio, sample_rate)
-            else:
-                tensor = torch.tensor(normalized_audio, dtype=torch.float32)
-                if tensor.ndim == 1:
-                    tensor = tensor.unsqueeze(0)
-                torchaudio.save(normalized_path, tensor, sample_rate)
+            torchaudio.save(normalized_path, normalized_audio.to_tensor(), sample_rate)
 
             self.clear_caches()
             return normalized_path
@@ -981,9 +974,9 @@ class GenerationService:
             if output_audio_path and enable_normalization:
                 print(f"🔊 Applying {normalization_method} volume normalization...")
                 waveform, sample_rate = torchaudio.load(output_audio_path)
+                buffer = AudioBuffer.from_tensor(waveform, sample_rate)
                 normalized_audio = enhance_multi_speaker_audio(
-                    waveform.squeeze(),
-                    sample_rate=sample_rate,
+                    buffer,
                     normalization_method=normalization_method,
                     target_rms=target_volume,
                 )
@@ -991,15 +984,11 @@ class GenerationService:
                     config.OUTPUT_MULTI_SPEAKER_SUBDIR,
                     "normalized_multi_speaker_audio",
                 )
-                if isinstance(normalized_audio, torch.Tensor):
-                    if normalized_audio.ndim == 1:
-                        normalized_audio = normalized_audio.unsqueeze(0)
-                    torchaudio.save(normalized_path, normalized_audio, sample_rate)
-                else:
-                    tensor = torch.tensor(normalized_audio, dtype=torch.float32)
-                    if tensor.ndim == 1:
-                        tensor = tensor.unsqueeze(0)
-                    torchaudio.save(normalized_path, tensor, sample_rate)
+                torchaudio.save(
+                    normalized_path,
+                    normalized_audio.to_tensor(),
+                    sample_rate,
+                )
 
                 print(f"🎵 Saved normalized audio to: {normalized_path}")
                 return normalized_path

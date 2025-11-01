@@ -7,6 +7,8 @@ import os
 import torch
 
 from app import config
+from app.audio.capabilities import dependency_report as build_dependency_report
+from app.audio.capabilities import describe_missing_dependencies, has_ffmpeg
 
 
 def configure_environment() -> None:
@@ -40,45 +42,46 @@ def ensure_output_directories() -> None:
 
 def install_ffmpeg_if_needed() -> bool:
     """Check if ffmpeg is available and provide installation guidance."""
-    from shutil import which
+    if has_ffmpeg():
+        return True
 
-    if which("ffmpeg") is None:
-        print("⚠️ FFmpeg not found. For full audio format support, install FFmpeg:")
-        print("   Windows: Download from https://ffmpeg.org/download.html")
-        print("   macOS: brew install ffmpeg")
-        print("   Linux: sudo apt install ffmpeg")
-        return False
-
-    return True
+    print("⚠️ FFmpeg not found. For full audio format support, install FFmpeg:")
+    print("   Windows: Download from https://ffmpeg.org/download.html")
+    print("   macOS: brew install ffmpeg")
+    print("   Linux: sudo apt install ffmpeg")
+    return False
 
 
 def check_audio_dependencies() -> dict[str, bool]:
     """Inspect optional audio dependencies and report their availability."""
     print("🔍 Checking audio processing dependencies...")
 
-    dependencies = {
-        "torchaudio": True,
-        "pydub": False,
-        "scipy": False,
-        "ffmpeg": False,
-    }
+    report = build_dependency_report()
 
-    try:
-        import pydub  # noqa: F401
+    if report.get("torchaudio", False):
+        print("✅ torchaudio available")
+    else:  # pragma: no cover - torchaudio is required but guard for completeness
+        print("❌ torchaudio missing - install it to run the web UI")
 
-        dependencies["pydub"] = True
+    if report.get("pydub", False):
         print("✅ pydub available")
-    except ImportError:
+    else:
         print("⚠️ pydub not available - install with: pip install pydub")
 
-    try:
-        import scipy.io  # noqa: F401
-
-        dependencies["scipy"] = True
+    if report.get("scipy", False):
         print("✅ scipy available")
-    except ImportError:
+    else:
         print("⚠️ scipy not available - install with: pip install scipy")
 
-    dependencies["ffmpeg"] = install_ffmpeg_if_needed()
+    if report.get("ffmpeg", False):
+        print("✅ FFmpeg available")
+    else:
+        print("⚠️ FFmpeg not found. For full audio format support, install FFmpeg:")
+        print("   Windows: Download from https://ffmpeg.org/download.html")
+        print("   macOS: brew install ffmpeg")
+        print("   Linux: sudo apt install ffmpeg")
 
-    return dependencies
+    for message in describe_missing_dependencies(report):
+        print(f"ℹ️ {message}")
+
+    return report

@@ -194,6 +194,10 @@ def build_tab(
 
                 if whisper_available:
                     gr.HTML("<p><em>✨ Voice will be auto-transcribed when saved!</em></p>")
+                else:
+                    gr.HTML(
+                        "<p><strong>⚠️ Whisper unavailable:</strong> install `faster-whisper` or `openai-whisper` to auto-generate transcripts.</p>"
+                    )
 
             with gr.Column(scale=1):
                 gr.Markdown("## 🗂️ Manage Voice Library")

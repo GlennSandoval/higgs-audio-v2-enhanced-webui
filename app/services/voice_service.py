@@ -20,7 +20,8 @@ _whisper_module = None
 _faster_whisper_model_cls = None
 
 try:
-    from faster_whisper import WhisperModel as _FasterWhisperModel
+    from faster_whisper import \
+        WhisperModel as _FasterWhisperModel  # type: ignore
 
     _WHISPER_BACKEND = "faster"
     WHISPER_AVAILABLE = True
@@ -28,7 +29,7 @@ try:
     print("✅ Using faster-whisper for transcription")
 except ImportError:
     try:
-        import whisper as _openai_whisper
+        import whisper as _openai_whisper  # type: ignore
 
         _WHISPER_BACKEND = "openai"
         WHISPER_AVAILABLE = True
@@ -211,13 +212,16 @@ class VoiceLibrary:
             temp_path = self._save_temp_audio_fn(audio_data, sample_rate)
             shutil.move(temp_path, voice_path)
 
-            transcript = self._transcribe_fn(voice_path)
+            if WHISPER_AVAILABLE:
+                transcript = self._transcribe_fn(voice_path)
+            else:
+                transcript = config.WHISPER_FALLBACK_TRANSCRIPTION
             create_voice_reference_txt(voice_path, transcript)
 
             default_config = self.get_default_voice_config()
             self.save_voice_config(sanitized_name, default_config)
-
-            return f"✅ Voice '{sanitized_name}' saved to library with default settings!"
+            suffix = "" if WHISPER_AVAILABLE else " ⚠️ Saved with fallback transcript (Whisper unavailable)."
+            return f"✅ Voice '{sanitized_name}' saved to library with default settings!{suffix}"
         except Exception as exc:
             return f"❌ Error saving voice: {exc}"
 

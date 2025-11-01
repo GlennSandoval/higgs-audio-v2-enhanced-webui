@@ -11,10 +11,15 @@ from typing import Union
 import numpy as np
 import torch
 import torchaudio
-from pydub import AudioSegment
+
+from app.audio.capabilities import has_ffmpeg
+
+try:  # Optional dependency; may be absent in minimal setups
+    from pydub import AudioSegment
+except ImportError:  # pragma: no cover - exercised when pydub is not installed
+    AudioSegment = None  # type: ignore
 
 from app import config
-
 
 __all__ = [
     "convert_audio_to_standard_format",
@@ -75,42 +80,50 @@ def convert_audio_to_standard_format(
     except Exception as exc:
         print(f"⚠️ Torchaudio failed: {exc}")
 
-    try:
-        if audio_path.lower().endswith(".mp3"):
-            audio = AudioSegment.from_mp3(audio_path)
-        elif audio_path.lower().endswith(".wav"):
-            audio = AudioSegment.from_wav(audio_path)
-        else:
-            audio = AudioSegment.from_file(audio_path)
+    if AudioSegment is not None and has_ffmpeg():
+        try:
+            if audio_path.lower().endswith(".mp3"):
+                audio = AudioSegment.from_mp3(audio_path)
+            elif audio_path.lower().endswith(".wav"):
+                audio = AudioSegment.from_wav(audio_path)
+            else:
+                audio = AudioSegment.from_file(audio_path)
 
-        if force_mono and audio.channels > 1:
-            audio = audio.set_channels(1)
-            print("🔄 Converted stereo to mono")
+            if force_mono and audio.channels > 1:
+                audio = audio.set_channels(1)
+                print("🔄 Converted stereo to mono")
 
-        audio = audio.set_frame_rate(target_sample_rate)
+            audio = audio.set_frame_rate(target_sample_rate)
 
-        audio_data = np.array(audio.get_array_of_samples(), dtype=np.float32)
+            audio_data = np.array(audio.get_array_of_samples(), dtype=np.float32)
 
-        if audio.sample_width == 1:
-            audio_data = audio_data / 128.0
-        elif audio.sample_width == 2:
-            audio_data = audio_data / 32768.0
-        elif audio.sample_width == 4:
-            audio_data = audio_data / 2147483648.0
-        else:
-            max_val = np.max(np.abs(audio_data))
-            if max_val > 1:
-                audio_data = audio_data / max_val
+            if audio.sample_width == 1:
+                audio_data = audio_data / 128.0
+            elif audio.sample_width == 2:
+                audio_data = audio_data / 32768.0
+            elif audio.sample_width == 4:
+                audio_data = audio_data / 2147483648.0
+            else:
+                max_val = np.max(np.abs(audio_data))
+                if max_val > 1:
+                    audio_data = audio_data / max_val
 
-        if audio.channels == 2 and not force_mono:
-            audio_data = audio_data.reshape(-1, 2).T
+            if audio.channels == 2 and not force_mono:
+                audio_data = audio_data.reshape(-1, 2).T
 
-        channel_info = "stereo" if audio.channels == 2 and not force_mono else "mono"
-        print(f"✅ Loaded with pydub: {channel_info} - {len(audio_data)} samples at {target_sample_rate}Hz")
-        return audio_data, target_sample_rate
+            channel_info = "stereo" if audio.channels == 2 and not force_mono else "mono"
+            print(
+                f"✅ Loaded with pydub: {channel_info} - {len(audio_data)} samples at {target_sample_rate}Hz"
+            )
+            return audio_data, target_sample_rate
 
-    except Exception as exc:
-        print(f"⚠️ Pydub failed: {exc}")
+        except Exception as exc:
+            print(f"⚠️ Pydub failed: {exc}")
+    else:
+        if AudioSegment is None:
+            print("⚠️ pydub not installed - skipping fallback loader")
+        elif not has_ffmpeg():  # pragma: no cover - printed only when ffmpeg missing
+            print("⚠️ FFmpeg missing - skipping pydub fallback loader")
 
     try:
         from scipy.io import wavfile

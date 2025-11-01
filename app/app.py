@@ -67,6 +67,7 @@ def create_app_context(
         generation_service=generation_service,
         voice_library_service=voice_library_service,
         whisper_available=WHISPER_AVAILABLE,
+        dependency_report=dependency_report,
     )
 
     return AppContext(
