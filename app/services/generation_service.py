@@ -110,6 +110,12 @@ class GenerationService:
         *,
         use_cache: bool = True,
     ) -> HiggsAudioResponse:
+        """Generate audio with optional caching.
+        
+        Only temperature, top_k, top_p, and ras_win_* parameters are currently used
+        by the serve engine. min_p and repetition_penalty are included for cache keys
+        and future compatibility but not passed to generation.
+        """
         self._ensure_engine()
 
         cache_key = None
@@ -151,7 +157,7 @@ class GenerationService:
         return output
 
     # ------------------------------------------------------------------
-    # Voice library helpers
+    # Voice library integration
     # ------------------------------------------------------------------
     def apply_voice_config_to_generation(
         self,
@@ -212,6 +218,11 @@ class GenerationService:
         sample_rate: int,
         test_text: str = config.DEFAULT_TEST_VOICE_PROMPT,
     ) -> tuple[str | None, str]:
+        """Test a voice sample by generating audio with provided text.
+        
+        Creates temporary audio/transcript files, generates audio using the voice,
+        and returns the test output path and status message.
+        """
         if audio_data is None:
             return None, "❌ Please upload an audio sample first"
 
@@ -255,7 +266,7 @@ class GenerationService:
             return None, f"❌ Error testing voice: {str(exc)}"
 
     # ------------------------------------------------------------------
-    # Generation flows
+    # Generation workflows
     # ------------------------------------------------------------------
     def generate_basic(
         self,
@@ -433,6 +444,7 @@ class GenerationService:
         ras_win_max_num_repeat: int = config.DEFAULT_RAS_WIN_MAX_NUM_REPEAT,
         do_sample: bool = config.DEFAULT_DO_SAMPLE,
     ) -> str:
+        """Alternative voice cloning using <|voice_ref_start|> tag format."""
         self._ensure_engine()
 
         if not transcript.strip():
@@ -498,6 +510,13 @@ class GenerationService:
         scene_description: str,
         chunk_size: int,
     ) -> str | None:
+        """Generate long-form audio by chunking text and concatenating segments.
+        
+        Supports three voice modes:
+        - Upload Voice: uses provided uploaded_voice for all chunks
+        - Predefined Voice: uses library voice from voice_prompt for all chunks  
+        - Smart Voice: generates first chunk without reference, then uses it for consistency
+        """
         self._ensure_engine()
         self._seed_if_needed(seed)
 
@@ -657,6 +676,15 @@ class GenerationService:
         auto_format: bool,
         speaker_pause_duration: float = config.DEFAULT_SPEAKER_PAUSE_SECONDS,
     ) -> str:
+        """Generate multi-speaker audio from transcript with [SPEAKER0], [SPEAKER1] tags.
+        
+        Voice methods:
+        - Upload Voices: uses uploaded_voices list indexed by speaker number
+        - Predefined Voices: uses predefined_voices list from voice library
+        - Smart Voice: generates first line per speaker, reuses for consistency
+        
+        Optionally inserts pauses between different speakers based on speaker_pause_duration.
+        """
         self._ensure_engine()
         self._seed_if_needed(seed)
 
@@ -841,6 +869,7 @@ class GenerationService:
                     )
 
                 if len(full_audio) > 1 and speaker_pause_duration > 0:
+                    # Add pause between different speakers
                     prev_line_index = lines.index(line) - 1
                     if prev_line_index >= 0:
                         prev_line = lines[prev_line_index].strip()
@@ -892,6 +921,18 @@ class GenerationService:
         speaker_pause_duration: float,
         *voice_components,
     ) -> str | None:
+        """Generate multi-speaker audio with dynamic speaker name mapping.
+        
+        Converts custom speaker names (e.g., [Alice], [Bob]) to SPEAKER0, SPEAKER1
+        format using speaker_mapping, then delegates to generate_multi_speaker.
+        
+        Voice components are extracted based on voice_method:
+        - Smart Voice: no voice assets needed
+        - Upload Voices: first 10 components are uploaded audio tuples
+        - Voice Library: components 10-20 (or last 10) are library voice names
+        
+        Optionally applies volume normalization after generation.
+        """
         if not text or not speaker_mapping:
             return None
 
@@ -940,6 +981,7 @@ class GenerationService:
                     speaker_pause_duration,
                 )
             elif voice_method == "Voice Library":
+                # Extract library voice selections from voice_components
                 if len(voice_components) >= 20:
                     library_selections = voice_components[10:20]
                 else:
@@ -1002,10 +1044,15 @@ class GenerationService:
             return None
 
     # ------------------------------------------------------------------
-    # Helper utilities for text parsing
+    # Text processing utilities
     # ------------------------------------------------------------------
     @staticmethod
     def _auto_format_multi_speaker(text: str) -> str:
+        """Convert free-form dialogue to [SPEAKER0], [SPEAKER1] format.
+        
+        Assumes alternating speakers when detecting quoted text or lines with colons.
+        Returns text unchanged if already formatted with [SPEAKER tags.
+        """
         if "[SPEAKER" in text:
             return text
 
@@ -1029,6 +1076,10 @@ class GenerationService:
 
     @staticmethod
     def _parse_multi_speaker_text(text: str) -> dict[str, list[str]]:
+        """Extract speaker IDs and their text segments from formatted transcript.
+        
+        Returns dict mapping SPEAKER0, SPEAKER1, etc. to lists of their text content.
+        """
         speaker_pattern = r"\[SPEAKER(\d+)\]\s*([^[]*?)(?=\[SPEAKER\d+\]|$)"
         matches = re.findall(speaker_pattern, text, re.DOTALL)
 
@@ -1042,6 +1093,10 @@ class GenerationService:
     def _convert_to_speaker_format(
         text: str, speaker_mapping: dict[str, str]
     ) -> str:
+        """Convert custom speaker names to [SPEAKER0], [SPEAKER1] format.
+        
+        Uses speaker_mapping to replace [CustomName] tags with [SPEAKER#] tags.
+        """
         if not text or not speaker_mapping:
             return text
 
@@ -1056,6 +1111,13 @@ class GenerationService:
 
     @staticmethod
     def _smart_chunk_text(text: str, max_chunk_size: int = 200) -> list[str]:
+        """Split text into chunks respecting paragraph and sentence boundaries.
+        
+        Prioritizes:
+        1. Paragraph boundaries (double newlines)
+        2. Sentence boundaries (. ! ?)
+        3. Word boundaries if needed to fit max_chunk_size
+        """
         paragraphs = text.split("\n\n")
         chunks: list[str] = []
 

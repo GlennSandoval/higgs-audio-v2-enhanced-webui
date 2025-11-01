@@ -85,10 +85,11 @@ def transcribe_audio(audio_path: str) -> str:
         return config.WHISPER_FALLBACK_TRANSCRIPTION
 
     try:
-        # faster-whisper exposes `transcribe` returning generator/segments
+        # faster-whisper returns (segments_generator, info) tuple
         if _WHISPER_BACKEND == "faster":
             segments, _info = _whisper_model.transcribe(audio_path, language="en")
             transcription = " ".join(segment.text for segment in segments)
+        # openai-whisper returns dict with 'text' key
         else:
             result = _whisper_model.transcribe(audio_path)
             transcription = result.get("text", "")
@@ -106,8 +107,11 @@ def transcribe_audio(audio_path: str) -> str:
 
 def robust_txt_path_creation(audio_path: str) -> str:
     """
-    Given an audio file path, returns the corresponding .txt path,
-    handling all common audio extensions case-insensitively.
+    Return the transcript file path (.txt) for a given audio file path.
+    
+    Handles common audio extensions (.wav, .mp3, .flac, .m4a, .ogg) case-insensitively.
+    If the audio file has a recognized extension, replaces it with the transcript extension.
+    Otherwise, appends the transcript extension to the original path.
     """
     audio_extensions = (".wav", ".mp3", ".flac", ".m4a", ".ogg")
     path = Path(audio_path)
@@ -115,12 +119,17 @@ def robust_txt_path_creation(audio_path: str) -> str:
     for ext in audio_extensions:
         if lower_name.endswith(ext):
             return str(path.with_suffix(config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION))
-    # Default: append transcript extension if original extension unexpected
+    # If extension is not recognized, append transcript extension to preserve original filename
     return str(path) + config.VOICE_LIBRARY_TRANSCRIPT_EXTENSION
 
 
 def create_voice_reference_txt(audio_path: str, transcript_sample: str | None = None) -> str:
-    """Create a transcript file for a saved voice sample."""
+    """
+    Create a transcript file for a saved voice sample.
+    
+    If transcript_sample is provided, uses it directly; otherwise transcribes the audio file.
+    Returns the path to the created transcript file.
+    """
     transcript_path = robust_txt_path_creation(audio_path)
     transcript = transcript_sample if transcript_sample is not None else transcribe_audio(audio_path)
 
@@ -226,7 +235,11 @@ class VoiceLibrary:
             return f"❌ Error saving voice: {exc}"
 
     def delete_voice(self, voice_name: str) -> str:
-        """Remove a voice and its transcript from the library."""
+        """
+        Remove a voice and its associated files from the library.
+        
+        Deletes the audio file, transcript, and configuration file for the specified voice.
+        """
         if not voice_name or voice_name == "None":
             return "❌ Please select a voice to delete"
 
@@ -250,7 +263,12 @@ class VoiceLibrary:
 
     # Resolution helpers -----------------------------------------------------------------
     def list_all_available_voices(self) -> list[str]:
-        """Return combined list of smart, predefined, and library voices."""
+        """
+        Return combined list of all available voice options.
+        
+        Includes Smart Voice mode, predefined voices (from voice_prompts/), 
+        and user-saved library voices, each with appropriate prefix.
+        """
         predefined: list[str] = []
         if os.path.exists(self._voice_prompts_dir):
             for entry in os.listdir(self._voice_prompts_dir):
@@ -265,7 +283,12 @@ class VoiceLibrary:
         return combined
 
     def get_voice_path(self, voice_selection: str | None) -> str | None:
-        """Resolve a voice selector value to a filesystem path."""
+        """
+        Resolve a voice selector value to a filesystem path.
+        
+        Returns None for Smart Voice mode, resolves predefined and library voice
+        prefixes to their respective directories.
+        """
         if not voice_selection or voice_selection == config.SMART_VOICE_LABEL:
             return None
 
@@ -286,14 +309,26 @@ class VoiceLibrary:
     def create_voice_reference_txt(
         self, audio_path: str, transcript_sample: str | None = None
     ) -> str:
-        """Create the transcript file for an audio reference."""
+        """
+        Create the transcript file for an audio reference.
+        
+        Delegates to the module-level create_voice_reference_txt function.
+        """
         return create_voice_reference_txt(audio_path, transcript_sample)
 
     def robust_txt_path_creation(self, audio_path: str) -> str:
-        """Return the transcript path for an audio file."""
+        """
+        Return the transcript path for an audio file.
+        
+        Delegates to the module-level robust_txt_path_creation function.
+        """
         return robust_txt_path_creation(audio_path)
 
 
 def create_default_voice_library() -> VoiceLibrary:
-    """Factory that returns a voice library with the default transcriber."""
+    """
+    Factory function that returns a VoiceLibrary instance with default configuration.
+    
+    Uses the default transcribe_audio function and default directory paths.
+    """
     return VoiceLibrary()
