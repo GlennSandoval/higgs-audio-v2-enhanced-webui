@@ -1,26 +1,27 @@
 import asyncio
 import base64
-import torch
-import numpy as np
-from io import BytesIO
-from dataclasses import dataclass
-from typing import List, Optional, Union
-from copy import deepcopy
-from transformers import AutoTokenizer, AutoProcessor
-from transformers.cache_utils import StaticCache
-from transformers.generation.streamers import BaseStreamer
-from transformers.generation.stopping_criteria import StoppingCriteria
-from dataclasses import asdict
-from loguru import logger
 import threading
-import librosa
+from copy import deepcopy
+from dataclasses import asdict, dataclass
+from io import BytesIO
+from typing import List, Optional, Union
 
+import numpy as np
+import torch
+import torchaudio
+from loguru import logger
+from torchaudio import functional as ta_functional
+from transformers import AutoProcessor, AutoTokenizer
+from transformers.cache_utils import StaticCache
+from transformers.generation.stopping_criteria import StoppingCriteria
+from transformers.generation.streamers import BaseStreamer
 
-from ..dataset.chatml_dataset import ChatMLSample, ChatMLDatasetSample, prepare_chatml_sample
+from ..audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
+from ..data_collator.higgs_audio_collator import HiggsAudioSampleCollator
+from ..dataset.chatml_dataset import (ChatMLDatasetSample, ChatMLSample,
+                                      prepare_chatml_sample)
 from ..model.higgs_audio import HiggsAudioModel
 from ..model.higgs_audio.utils import revert_delay_pattern
-from ..data_collator.higgs_audio_collator import HiggsAudioSampleCollator
-from ..audio_processing.higgs_audio_tokenizer import load_higgs_audio_tokenizer
 
 
 @dataclass
@@ -183,7 +184,7 @@ class HiggsAudioServeEngine:
         tokenizer_name_or_path: Optional[str] = None,
         device: str = "cuda",
         torch_dtype: Union[torch.dtype, str] = "auto",
-        kv_cache_lengths: List[int] = [1024, 4096, 8192],  # Multiple KV cache sizes
+        kv_cache_lengths: List[int] = [1024, 4096, 8192, 16384],  # Multiple KV cache sizes
     ):
         """
         Initialize the HiggsAudioServeEngine, a serving wrapper for the HiggsAudioModel.
@@ -288,13 +289,36 @@ class HiggsAudioServeEngine:
 
         # Configure the audio inputs
         audio_ids_l = []
+        target_sr = self.audio_tokenizer.sampling_rate
+
+        def _load_audio_array(source: Union[str, BytesIO]) -> Optional[np.ndarray]:
+            try:
+                waveform, sample_rate = torchaudio.load(source)
+            except RuntimeError as exc:
+                logger.error(f"Failed to load audio with torchaudio: {exc}")
+                return None
+
+            if waveform.dtype != torch.float32:
+                waveform = waveform.to(torch.float32)
+
+            if waveform.dim() == 1:
+                waveform = waveform.unsqueeze(0)
+
+            if waveform.shape[0] > 1:
+                waveform = waveform.mean(dim=0, keepdim=True)  # downmix to mono for tokenizer
+
+            if sample_rate != target_sr:
+                waveform = ta_functional.resample(waveform, sample_rate, target_sr)
+
+            return waveform.squeeze(0).cpu().numpy()
+
         for audio_content in audio_contents:
             if audio_content.audio_url not in ["placeholder", ""]:
-                raw_audio, _ = librosa.load(audio_content.audio_url, sr=self.audio_tokenizer.sampling_rate)
+                raw_audio = _load_audio_array(audio_content.audio_url)
             elif audio_content.raw_audio is not None:
-                raw_audio, _ = librosa.load(
-                    BytesIO(base64.b64decode(audio_content.raw_audio)), sr=self.audio_tokenizer.sampling_rate
-                )
+                audio_buffer = BytesIO(base64.b64decode(audio_content.raw_audio))
+                audio_buffer.seek(0)
+                raw_audio = _load_audio_array(audio_buffer)
             else:
                 raw_audio = None
 

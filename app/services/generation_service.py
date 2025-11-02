@@ -82,6 +82,7 @@ class GenerationService:
             config.MODEL_ID,
             config.AUDIO_TOKENIZER_ID,
             device=self._device,
+            torch_dtype=torch.bfloat16, 
         )
         print("✅ Model initialized successfully")
 
@@ -146,7 +147,9 @@ class GenerationService:
             "ras_win_max_num_repeat": ras_win_max_num_repeat,
         }
 
+        start = time.time()
         output: HiggsAudioResponse = self._serve_engine.generate(**generate_kwargs)  # type: ignore[arg-type]
+        print(f"Generation took: {time.time() - start:.2f}s")
 
         if use_cache and cache_key:
             self._cache.audio[cache_key] = output
