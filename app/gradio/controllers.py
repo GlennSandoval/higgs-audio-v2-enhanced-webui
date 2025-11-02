@@ -47,6 +47,16 @@ class AppController:
             show_error=True,
         )
 
+    def cleanup(self) -> None:
+        """Perform cleanup operations on shutdown."""
+        print("🧹 Cleaning up resources...")
+        try:
+            # Clear generation caches and free GPU memory
+            if hasattr(self.context, "generation_service"):
+                self.context.generation_service.clear_caches()
+        except Exception as e:
+            print(f"⚠️  Error clearing caches: {e}")
+
     def to_metadata(self) -> dict[str, Any]:
         """Return a metadata snapshot useful for debugging and tests."""
         return {
