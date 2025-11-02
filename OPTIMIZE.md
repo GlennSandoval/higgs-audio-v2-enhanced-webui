@@ -3,6 +3,8 @@
 ## 1. Metal Acceleration
 Offload the transformer stack to Apple silicon by installing the latest Metal-enabled PyTorch build (nightly if the stable channel lags), exporting `PYTORCH_ENABLE_MPS_FALLBACK=1`, and confirming `torch.backends.mps.is_available()` before launching `higgs_audio_gradio.py`. Running on MPS cuts end-to-end generation latency by roughly 30–40%, keeps VRAM-bound caches warm for multi-turn sessions, and frees CPU cycles for audio post-processing so larger batch sizes stay responsive.
 
+Startup now exports `PYTORCH_ENABLE_MPS_FALLBACK=1` automatically on macOS and reports whether the MPS backend is available, so you can confirm Metal acceleration right from the launch logs.
+
 ## 2. Cache Reuse Discipline
 Let `_generate_with_cache` run with `use_cache=True` (the service default) so intra-run loops like longform chunking and multi-speaker turns can reuse prepared KV/audio buffers. When you want to explore new decoding settings, group those experiments instead of constantly nudging `temperature`, `top_k`, or `top_p`; each change blows the cache key and forces a fresh decode. `GenerationService` already calls `clear_caches()` after each UI-triggered job, so reach for it manually only if you keep the engine warm for back-to-back custom runs and notice VRAM pressure.
 
@@ -19,7 +21,7 @@ Balance decoding parameters by preferring modest increases to `top_k`/`top_p` in
 Parallelize UI workloads by keeping Gradio callbacks non-blocking, letting background threads handle normalization (`normalize_audio_volume`) and cache writes, and avoiding large blocking numpy copies in the main UI thread.
 
 ## Implementation Checklist
-- [ ] 1. Metal Acceleration
+- [x] 1. Metal Acceleration
 - [ ] 2. Cache Reuse Discipline
 - [ ] 3. Voice Asset Preload
 - [ ] 4. Input Preprocessing

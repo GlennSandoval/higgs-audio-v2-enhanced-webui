@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import platform
+from typing import Any
 
 import torch
 
@@ -17,6 +19,7 @@ def configure_environment() -> None:
     # Disable tokenizers parallelism to avoid fork-related warnings when Gradio
     # launches with multiprocessing after tokenizer initialization
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    _configure_mps_environment()
 
 
 def select_device() -> torch.device:
@@ -28,7 +31,7 @@ def select_device() -> torch.device:
     else:
         device = torch.device("cpu")
 
-    print(f"🖥️ Using device: {device}")
+    print(f"🖥️  Using device: {device}")
     return device
 
 
@@ -88,3 +91,39 @@ def check_audio_dependencies() -> dict[str, bool]:
         print(f"ℹ️ {message}")
 
     return report
+
+
+def _configure_mps_environment() -> None:
+    """Enable Metal acceleration on macOS if the MPS backend is usable."""
+    if not _is_macos():
+        return
+
+    os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = config.PYTORCH_ENABLE_MPS_FALLBACK
+
+    backend = _get_mps_backend()
+    if backend is None:
+        print(
+            "⚠️ PyTorch installed without the Metal (MPS) backend. Install a Metal-enabled build to leverage Apple silicon."
+        )
+        return
+
+    try:
+        available = backend.is_available()
+    except Exception as exc:  # pragma: no cover - defensive guard for exotic builds
+        print(f"⚠️ Unable to query MPS availability ({exc}). Falling back to CPU/GPU.")
+        return
+
+    if available:
+        print("🍏 Metal acceleration enabled (MPS backend available).")
+    else:
+        print(
+            "⚠️ MPS backend not available. Install the latest Metal-enabled PyTorch build to run on Apple silicon."
+        )
+
+
+def _is_macos() -> bool:
+    return platform.system() == "Darwin"
+
+
+def _get_mps_backend() -> Any | None:
+    return getattr(torch.backends, "mps", None)

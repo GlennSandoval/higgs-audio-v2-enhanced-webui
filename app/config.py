@@ -2,8 +2,8 @@
 
 import os
 
-
 HF_HUB_ENABLE_HF_TRANSFER = "1"
+PYTORCH_ENABLE_MPS_FALLBACK = "1"
 
 MODEL_ID = "bosonai/higgs-audio-v2-generation-3B-base"
 AUDIO_TOKENIZER_ID = "bosonai/higgs-audio-v2-tokenizer"
