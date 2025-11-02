@@ -50,11 +50,11 @@ An advanced, feature-rich web interface for the Higgs Audio v2 model with profes
 
 ## 🛠️ Installation & Setup
 
-git clone https://github.com/psdwizzard/higgs-audio-v2-enhanced-webui.git
+git clone https://github.com/GlennSandoval/higgs-audio-v2-enhanced-webui.git
 ### Quick Start
 ```bash
 # 1. Clone the repository
-git clone https://github.com/psdwizzard/higgs-audio-v2-enhanced-webui.git
+git clone https://github.com/GlennSandoval/higgs-audio-v2-enhanced-webui.git
 cd higgs-audio-v2-enhanced-webui
 
 # 2. Install dependencies (creates .venv via uv)
