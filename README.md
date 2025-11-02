@@ -1,5 +1,7 @@
 # 🎵 Higgs Audio v2 Enhanced WebUI
 
+Forked from https://github.com/psdwizzard/higgs-audio-v2-enhanced-webui in order to make it work nicer with Apple Silicon
+
 An advanced, feature-rich web interface for the Higgs Audio v2 model with professional audio generation capabilities, multi-speaker support, volume normalization, and extensive customization options.
 
 ![Higgs Audio WebUI](figures/higgs_audio_v2_architecture_combined.png)
