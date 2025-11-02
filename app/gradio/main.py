@@ -11,14 +11,6 @@ from app.gradio.config import BootstrapConfig
 from app.gradio.controllers import AppController
 
 
-def _format_dependency_report(report: Iterable[tuple[str, bool]]) -> str:
-    lines = []
-    for name, available in report:
-        status = "✅" if available else "⚠️"
-        lines.append(f"   {status} {name}")
-    return "\n".join(lines)
-
-
 def build_controller(config: BootstrapConfig | None = None) -> AppController:
     """Instantiate an :class:`AppController` using the provided configuration."""
     resolved_config = config or BootstrapConfig.from_environment()
@@ -29,22 +21,7 @@ def build_controller(config: BootstrapConfig | None = None) -> AppController:
 def create_app(config: BootstrapConfig | None = None) -> gr.Blocks:
     """Return the fully wired Gradio ``Blocks`` instance for the UI."""
     controller = build_controller(config)
-    return controller.demo
-
-
-def format_startup_banner(controller: AppController) -> str:
-    """Render a startup banner summarizing key runtime information."""
-    lines = [
-        "🚀 Starting Higgs Audio v2 Generator...",
-        "✨ Features: Voice Cloning, Multi-Speaker, Caching, Auto-Transcription, Enhanced Audio Processing",
-    ]
-    dependency_report = _format_dependency_report(
-        sorted(controller.dependency_report.items())
-    )
-    if dependency_report:
-        lines.append("🔧 Dependency check:")
-        lines.append(dependency_report)
-    return "\n".join(lines)
+    return controller.ui_blocks
 
 
 def _apply_bootstrap_environment(config: BootstrapConfig) -> None:

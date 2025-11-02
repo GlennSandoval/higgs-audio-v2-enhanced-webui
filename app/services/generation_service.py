@@ -150,7 +150,7 @@ class GenerationService:
         start = time.time()
         output: HiggsAudioResponse = self._serve_engine.generate(**generate_kwargs)  # type: ignore[arg-type]
         duration = time.time() - start
-        print(f"⏱️ Generation completed in {duration:.2f}s")
+        print(f"⏱️  Generation completed in {duration:.2f}s")
 
         if use_cache and cache_key:
             self._cache.audio[cache_key] = output

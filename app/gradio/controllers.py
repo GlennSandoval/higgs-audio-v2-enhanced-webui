@@ -13,7 +13,7 @@ from app.gradio.config import BootstrapConfig
 
 @dataclass(frozen=True)
 class AppController:
-    """Coordinates Gradio demo creation and exposes dependency metadata."""
+    """Coordinates Gradio UI creation and exposes dependency metadata."""
 
     context: AppContext
 
@@ -24,9 +24,9 @@ class AppController:
         return cls(context=app_context)
 
     @property
-    def demo(self) -> gr.Blocks:
+    def ui_blocks(self) -> gr.Blocks:
         """Return the configured Gradio ``Blocks`` instance."""
-        return self.context.demo
+        return self.context.ui_blocks
 
     @property
     def dependency_report(self) -> dict[str, bool]:
@@ -39,12 +39,13 @@ class AppController:
         return self.context.whisper_available
 
     def launch(self, *, share: bool, server_name: str, server_port: int) -> None:
-        """Launch the underlying Gradio demo with the given server options."""
-        self.demo.launch(
+        """Launch the underlying Gradio UI with the given server options."""
+        self.ui_blocks.launch(
             share=share,
             server_name=server_name,
             server_port=server_port,
             show_error=True,
+            quiet=True,
         )
 
     def cleanup(self) -> None:

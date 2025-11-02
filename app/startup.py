@@ -65,27 +65,27 @@ def check_audio_dependencies() -> dict[str, bool]:
     report = build_dependency_report()
 
     if report.get("torchaudio", False):
-        print("✅ torchaudio available")
+        print("  ✅ torchaudio available")
     else:  # pragma: no cover - torchaudio is required but guard for completeness
-        print("❌ torchaudio missing - install it to run the web UI")
+        print("  ❌ torchaudio missing - install it to run the web UI")
 
     if report.get("pydub", False):
-        print("✅ pydub available")
+        print("  ✅ pydub available")
     else:
-        print("⚠️ pydub not available - install with: pip install pydub")
+        print("  ⚠️ pydub not available - install with: pip install pydub")
 
     if report.get("scipy", False):
-        print("✅ scipy available")
+        print("  ✅ scipy available")
     else:
-        print("⚠️ scipy not available - install with: pip install scipy")
+        print("  ⚠️ scipy not available - install with: pip install scipy")
 
     if report.get("ffmpeg", False):
-        print("✅ FFmpeg available")
+        print("  ✅ FFmpeg available")
     else:
-        print("⚠️ FFmpeg not found. For full audio format support, install FFmpeg:")
-        print("   Windows: Download from https://ffmpeg.org/download.html")
-        print("   macOS: brew install ffmpeg")
-        print("   Linux: sudo apt install ffmpeg")
+        print("  ⚠️ FFmpeg not found. For full audio format support, install FFmpeg:")
+        print("     Windows: Download from https://ffmpeg.org/download.html")
+        print("     macOS: brew install ffmpeg")
+        print("     Linux: sudo apt install ffmpeg")
 
     for message in describe_missing_dependencies(report):
         print(f"ℹ️ {message}")

@@ -29,7 +29,7 @@ class AppContext:
     voice_library_service: VoiceLibrary
     generation_service: GenerationService
     audio_dependency_report: dict[str, bool]
-    demo: gr.Blocks
+    ui_blocks: gr.Blocks
     bootstrap_config: "BootstrapConfig"
 
 
@@ -76,11 +76,11 @@ def create_app_context(
         voice_library_service=voice_library_service,
         generation_service=generation_service,
         audio_dependency_report=dependency_report,
-        demo=demo,
+        ui_blocks=demo,
         bootstrap_config=resolved_config,
     )
 
 
 def create_demo() -> gr.Blocks:
     """Convenience helper that returns a ready-to-launch Gradio ``Blocks``."""
-    return create_app_context().demo
+    return create_app_context().ui_blocks

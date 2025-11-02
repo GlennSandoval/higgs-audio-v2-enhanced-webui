@@ -9,7 +9,7 @@ import sys
 
 from app import config as app_config
 from app.gradio import BootstrapConfig
-from app.gradio.main import build_controller, format_startup_banner
+from app.gradio.main import build_controller
 
 
 def _parse_args() -> argparse.Namespace:
@@ -39,7 +39,6 @@ def main() -> None:
     args = _parse_args()
 
     controller = build_controller(BootstrapConfig.from_environment())
-    print(format_startup_banner(controller))
 
     # Track if cleanup has already been called to prevent duplicate execution
     cleanup_done = {"flag": False}
@@ -75,7 +74,10 @@ def main() -> None:
         print(
             "⚠️  Warning: Your interface will be publicly accessible to anyone with the link!"
         )
-
+  
+    print("\n🚀 Starting Higgs Audio v2 Generator...")
+    print("✨ Features: Voice Cloning, Multi-Speaker, Caching, Auto-Transcription, Enhanced Audio Processing\n\n")
+    
     controller.launch(
         share=args.share,
         server_name=args.server_name,
