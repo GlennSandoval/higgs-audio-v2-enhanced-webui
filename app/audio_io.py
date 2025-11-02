@@ -223,9 +223,11 @@ def save_temp_audio_robust(
         if waveform.dim() == 1:
             waveform = waveform.unsqueeze(0)
 
+        channels = waveform.shape[0]
+        samples = waveform.shape[1]
         print(
-            f"Saving audio: shape={waveform.shape}, dtype={waveform.dtype}, "
-            f"max={waveform.max()}, min={waveform.min()}"
+            f"💾 Saving audio buffer to {temp_path} "
+            f"({channels} channels, {samples} samples, dtype={waveform.dtype})"
         )
 
         torchaudio.save(temp_path, waveform, sample_rate)

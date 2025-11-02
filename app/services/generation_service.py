@@ -77,14 +77,14 @@ class GenerationService:
         if self._serve_engine is not None:
             return
 
-        print("🚀 Initializing Higgs Audio model...")
+        print(f"🚀 Initializing Higgs Audio model on {self._device}...")
         self._serve_engine = HiggsAudioServeEngine(
             config.MODEL_ID,
             config.AUDIO_TOKENIZER_ID,
             device=self._device,
             torch_dtype=torch.bfloat16, 
         )
-        print("✅ Model initialized successfully")
+        print("✅ Higgs Audio model ready for generation")
 
     def _prepare_system_message(self, scene_description: str = "") -> str:
         system_content = config.DEFAULT_SYSTEM_MESSAGE
@@ -133,7 +133,7 @@ class GenerationService:
                 do_sample=do_sample,
             )
             if cache_key in self._cache.audio:
-                print("🚀 Using cached audio result")
+                print("♻️ Serving cached audio result")
                 return self._cache.audio[cache_key]
 
         generate_kwargs = {
@@ -149,7 +149,8 @@ class GenerationService:
 
         start = time.time()
         output: HiggsAudioResponse = self._serve_engine.generate(**generate_kwargs)  # type: ignore[arg-type]
-        print(f"Generation took: {time.time() - start:.2f}s")
+        duration = time.time() - start
+        print(f"⏱️ Generation completed in {duration:.2f}s")
 
         if use_cache and cache_key:
             self._cache.audio[cache_key] = output
@@ -212,7 +213,7 @@ class GenerationService:
             )
             return output
         except Exception as exc:
-            print(f"Error applying voice config: {exc}")
+            print(f"❌ Error applying voice config: {exc}")
             return None
 
     def test_voice_sample(
@@ -575,7 +576,10 @@ class GenerationService:
             sampling_rate = config.DEFAULT_SAMPLE_RATE
 
             for index, chunk in enumerate(chunks):
-                print(f"Processing chunk {index + 1}/{len(chunks)}: {chunk[:50]}...")
+                snippet = chunk[:80].replace("\n", " ")
+                print(
+                    f"🧩 Processing chunk {index + 1}/{len(chunks)} ({len(chunk)} chars): {snippet}..."
+                )
                 if (
                     voice_choice == "Upload Voice"
                     and voice_ref_path
@@ -831,7 +835,8 @@ class GenerationService:
                         Message(role="user", content=text_content),
                     ]
 
-                print(f"📝 Generating audio for: '{text_content}'")
+                word_count = len(text_content.split())
+                print(f"🎧 Synthesizing audio for {speaker_id} ({word_count} words)")
                 output = self._generate_with_cache(
                     messages, max_new_tokens, temperature, use_cache=False
                 )

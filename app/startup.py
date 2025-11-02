@@ -28,7 +28,7 @@ def select_device() -> torch.device:
     else:
         device = torch.device("cpu")
 
-    print(f"Using device: {device}")
+    print(f"🖥️ Using device: {device}")
     return device
 
 

@@ -187,7 +187,7 @@ class VoiceLibrary:
                 json.dump(voice_config_data, handle, indent=2)
             return True
         except Exception as exc:
-            print(f"Error saving voice config: {exc}")
+            print(f"❌ Error saving voice config: {exc}")
             return False
 
     def load_voice_config(self, voice_name: str) -> dict:
@@ -198,7 +198,7 @@ class VoiceLibrary:
                 with open(config_path, encoding="utf-8") as handle:
                     return json.load(handle)
             except Exception as exc:
-                print(f"Error loading voice config: {exc}")
+                print(f"⚠️ Error loading voice config: {exc}")
         return self.get_default_voice_config()
 
     # CRUD operations --------------------------------------------------------------------

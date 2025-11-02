@@ -55,7 +55,7 @@ class AppController:
             if hasattr(self.context, "generation_service"):
                 self.context.generation_service.clear_caches()
         except Exception as e:
-            print(f"⚠️  Error clearing caches: {e}")
+            print(f"⚠️ Error clearing caches: {e}")
 
     def to_metadata(self) -> dict[str, Any]:
         """Return a metadata snapshot useful for debugging and tests."""
