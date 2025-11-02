@@ -14,6 +14,9 @@ from app.audio.capabilities import describe_missing_dependencies, has_ffmpeg
 def configure_environment() -> None:
     """Set required environment variables before the app starts."""
     os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = config.HF_HUB_ENABLE_HF_TRANSFER
+    # Disable tokenizers parallelism to avoid fork-related warnings when Gradio
+    # launches with multiprocessing after tokenizer initialization
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 
 def select_device() -> torch.device:
